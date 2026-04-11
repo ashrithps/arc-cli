@@ -10,15 +10,44 @@ console.log = noop; console.error = noop; console.warn = noop;
 
 import blessed from 'blessed';
 import contrib from 'blessed-contrib';
+import * as fs from 'fs';
 type ActualClientType = typeof import('../client.js').ActualClient;
 
 const logBuffer: string[] = [];
-console.log = (...a: any[]) => logBuffer.push(a.join(' '));
-console.error = (...a: any[]) => logBuffer.push('[ERR] ' + a.join(' '));
-console.warn = (...a: any[]) => logBuffer.push('[WARN] ' + a.join(' '));
+// When ARC_DEBUG=1 is set we tee every captured log to /tmp/arc-tui.log so
+// an operator can diagnose "TUI hangs on startup" without a crash firing.
+// Keeps the on-screen suppression intact for normal users.
+const debugEnabled = process.env.ARC_DEBUG === '1' || process.env.ARC_TUI_DEBUG === '1';
+let debugStream: fs.WriteStream | null = null;
+// Optional status-bar bridge: when we see a known @actual-app/api progress
+// message we forward it to the status bar as a human-readable hint so the
+// user knows the connect is actually making progress. Set by connect()
+// below so pushLog can call it before the status API is wired.
+let reportStartupProgress: ((msg: string) => void) | null = null;
+function pushLog(line: string) {
+  logBuffer.push(line);
+  if (debugEnabled) {
+    try {
+      if (!debugStream) debugStream = fs.createWriteStream('/tmp/arc-tui.log', { flags: 'a' });
+      debugStream.write(`[${new Date().toISOString()}] ${line}\n`);
+    } catch { /* best effort */ }
+  }
+  if (reportStartupProgress) {
+    // Map the raw @actual-app/api log lines to short status-bar phrases.
+    if (/Loading fresh spreadsheet/i.test(line)) reportStartupProgress('Loading budget data…');
+    else if (/Syncing since/i.test(line)) reportStartupProgress('Syncing with server…');
+    else if (/Got messages from server (\d+)/i.test(line)) {
+      const m = line.match(/Got messages from server (\d+)/i);
+      const n = m ? m[1] : '';
+      reportStartupProgress(n && n !== '0' ? `Applied ${n} updates` : 'Up to date');
+    } else if (/\[Client\] Connected to budget/i.test(line)) reportStartupProgress('Connected, loading accounts…');
+  }
+}
+console.log = (...a: any[]) => pushLog(a.join(' '));
+console.error = (...a: any[]) => pushLog('[ERR] ' + a.join(' '));
+console.warn = (...a: any[]) => pushLog('[WARN] ' + a.join(' '));
 
 // Catch crashes and write to file before exit
-import * as fs from 'fs';
 process.on('uncaughtException', (err) => {
   try {
     fs.writeFileSync('/tmp/arc-crash.log', `${err.stack}\n\nLog buffer:\n${logBuffer.join('\n')}`);
@@ -638,17 +667,35 @@ let ActualClient: ActualClientType;
 let client: InstanceType<ActualClientType>;
 
 async function connect() {
-  updateStatus(`{${T.accent}-fg}${IC.sparkle} Connecting...{/${T.accent}-fg}`);
+  pushLog('[connect] entering');
+  const startedAt = Date.now();
+  updateStatus(`{${T.accent}-fg}${IC.sparkle} Connecting to Actual server…{/${T.accent}-fg}`);
   screen.render();
 
+  // Wire the pushLog → status-bar bridge so @actual-app/api progress lines
+  // are reflected on-screen while connect() is running. Unhook after
+  // connect resolves so unrelated post-connect logs don't spam the status.
+  reportStartupProgress = (msg: string) => {
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    updateStatus(`{${T.accent}-fg}${IC.sparkle} ${msg} ({${T.muted}-fg}${elapsed}s{/${T.muted}-fg}){/${T.accent}-fg}`);
+    screen.render();
+  };
+
   try {
+    pushLog('[connect] calling ActualClient.fromEnv()');
     client = ActualClient.fromEnv();
+    pushLog('[connect] fromEnv ok; calling client.connect()');
     await client.connect();
+    pushLog('[connect] client.connect() resolved');
     state.connected = true;
     await refreshConnectedState();
+    pushLog('[connect] refreshConnectedState done');
   } catch (err: any) {
+    pushLog(`[connect] error: ${err?.stack || err?.message || err}`);
     updateStatus(`{${T.red}-fg}${IC.cross} Connection failed: ${err.message}{/${T.red}-fg}`);
     screen.render();
+  } finally {
+    reportStartupProgress = null;
   }
 }
 
