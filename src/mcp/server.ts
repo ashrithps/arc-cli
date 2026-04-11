@@ -656,27 +656,76 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
 }
 
 /**
- * Production dep resolver: opens a fresh connected `ActualClient` + a
- * `SafeWriter` backed by the default `BackupManager`, then disconnects when
- * the handler returns.
+ * Cached client for the lifetime of the MCP process.
+ *
+ * Previously every tool call paid the full connect cost (5–10s for cloud
+ * budget download + sync), which meant each Claude Desktop turn was
+ * painfully slow AND created SQLite lock contention windows when multiple
+ * tool calls from the same turn overlapped. We now lazily open a single
+ * `ActualClient` on the first tool call and reuse it across subsequent
+ * calls. A SIGINT/SIGTERM handler disconnects cleanly on shutdown.
+ *
+ * A simple in-flight mutex (`connectInFlight`) serialises the first
+ * connect even if two tools fire in parallel, preventing duplicate
+ * init()s from racing each other.
+ */
+let cachedDeps: McpHandlerDeps | null = null;
+let connectInFlight: Promise<McpHandlerDeps> | null = null;
+let shutdownInstalled = false;
+
+async function ensureCachedClient(): Promise<McpHandlerDeps> {
+  if (cachedDeps) return cachedDeps;
+  if (connectInFlight) return connectInFlight;
+
+  connectInFlight = (async () => {
+    const client = ActualClient.fromEnv();
+    await client.connect();
+    const backup = new BackupManager();
+    const writer = new SafeWriter(client, backup);
+    const deps: McpHandlerDeps = { client, writer };
+    cachedDeps = deps;
+
+    if (!shutdownInstalled) {
+      shutdownInstalled = true;
+      const shutdown = async () => {
+        const current = cachedDeps;
+        cachedDeps = null;
+        if (!current) return;
+        try {
+          await current.client.disconnect();
+        } catch {
+          try { await current.client.api.shutdown(); } catch { /* best effort */ }
+        }
+      };
+      process.on('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });
+      process.on('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });
+      process.on('beforeExit', () => { void shutdown(); });
+    }
+
+    return deps;
+  })();
+
+  try {
+    return await connectInFlight;
+  } finally {
+    connectInFlight = null;
+  }
+}
+
+/**
+ * Production dep resolver: returns the cached `ActualClient` + `SafeWriter`,
+ * opening them lazily on first use. `cleanup` is a no-op because we keep
+ * the connection alive for the lifetime of the MCP process; the signal
+ * handlers installed inside `ensureCachedClient` tear things down at exit.
  */
 async function withRealClient(): Promise<{
   deps: McpHandlerDeps;
   cleanup: () => Promise<void>;
 }> {
-  const client = ActualClient.fromEnv();
-  await client.connect();
-  const backup = new BackupManager();
-  const writer = new SafeWriter(client, backup);
+  const deps = await ensureCachedClient();
   return {
-    deps: { client, writer },
-    cleanup: async () => {
-      try {
-        await client.disconnect();
-      } catch {
-        try { await client.api.shutdown(); } catch { /* best effort */ }
-      }
-    },
+    deps,
+    cleanup: async () => { /* no-op: client lives for the MCP session */ },
   };
 }
 

@@ -36,7 +36,18 @@ function shouldSuppress(args: any[]): boolean {
 
 export function installActualConsoleFilter(): void {
   if (installed) return;
-  if (process.env.ARCTUAL_DISABLE_OUTPUT_FILTER === '1') return;
+  // Allow opt-out via either the modern (ARC_*) or legacy (ARCTUAL_*) env
+  // var name. The CLI rename to `arc` renamed the tui's set-side to the
+  // modern name but missed this read-site, which silently re-enabled the
+  // filter for the TUI and trapped blessed's ANSI writes in a line buffer
+  // (blessed's alternate-screen / clear sequences don't contain a newline,
+  // so the filter's split-on-newline logic buffered them forever and the
+  // TUI looked like it was hanging). Keep accepting both names so any
+  // lingering user-level overrides still work.
+  if (
+    process.env.ARC_DISABLE_OUTPUT_FILTER === '1' ||
+    process.env.ARCTUAL_DISABLE_OUTPUT_FILTER === '1'
+  ) return;
   installed = true;
 
   const originalLog = console.log.bind(console);

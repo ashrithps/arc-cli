@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import 'dotenv/config';
+// Disable the @actual-app/api console-noise filter BEFORE anything else
+// imports src/utils/actual-console.ts. The filter wraps process.stdout.write
+// with a newline-buffered line filter that would otherwise trap blessed's
+// ANSI control sequences (alternate-screen enter, cursor hide, clear, etc.)
+// indefinitely, making the TUI look frozen even though the process is
+// running. We set both the modern ARC_* and legacy ARCTUAL_* names so
+// this also works with any older runtime snapshot still on disk.
 process.env.ARC_DISABLE_OUTPUT_FILTER = '1';
+process.env.ARCTUAL_DISABLE_OUTPUT_FILTER = '1';
 
 // Suppress @actual-app/api console noise
 const _log = console.log, _err = console.error, _warn = console.warn;
