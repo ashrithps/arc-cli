@@ -27,6 +27,49 @@ Arc exposes the same operations three ways:
 
 Prefer the MCP tools when driving Arc from an agent — inputs are schema-validated and errors are structured.
 
+## Answering Common Questions (read this first)
+
+Most real user questions are answered by **transaction-based queries**, not by the **budgets** commands. The `budgets *` commands describe the user's planned budget (envelopes, carryover, set amounts) and are only meaningful when the user has actively budgeted amounts for the period. If the user asks "how much did I spend", "what was my total", "give me a breakdown", assume the answer lives in `query` or `transactions`, not `budgets`.
+
+Use this mapping:
+
+| Question | Right command | Wrong command |
+|---|---|---|
+| How much did I spend this month? | `arc query spending --month <YYYY-MM>` | `arc budgets summary --month …` (only budgeted totals) |
+| Monthly totals over time | `arc query monthly --start … --end …` | `arc budgets months` |
+| Top spending categories / biggest categories | `arc query top --month …` | `arc budgets month --month …` |
+| Spend by payee / who did I pay | `arc query payee --month …` | — |
+| Spend in one category over time | `arc query category --name "Food" --start … --end …` | — |
+| Uncategorized transactions | `arc query uncategorized` | — |
+| Account balance | `arc accounts balance --id "<name>"` | `arc budgets month …` |
+| Balance history over time | `arc query balance-history --account … --start … --end …` | — |
+| Trends / velocity | `arc query trends --start … --end …` | — |
+| Raw transaction list for a period | `arc transactions list --start … --end …` | — |
+
+Only use the `budgets` commands when the question is explicitly about the user's **planned** budget:
+
+- "Am I over budget for Groceries?" → `arc budgets month --month …`
+- "What did I budget for this category?" → `arc budgets month --month …`
+- "Show me my income for the month" → `arc budgets income --month …`
+- "What's my set amount for Rent?" → `arc budgets month --month …`
+- "Roll this category's balance over" → `arc budgets set-carryover …`
+- "Move budget from X to Y" → `arc budgets transfer --from … --to …`
+
+If the user has not set budgeted amounts, `budgets summary` and `budgets month` will show zeros — that is expected, not a bug. Fall back to `query spending` for the real answer.
+
+### Amounts and currency
+
+Arc only talks to **Actual Budget**. There is no other backend, database, or storage layer — do not speculate about Convex, Postgres, or anything else.
+
+Actual stores every amount as an **integer in minor units** (`amount = majorUnits * 100`). Examples: `8989` means `89.89`, `-37936` means `-379.36`, `220000` means `2200.00`. This is true regardless of the user's currency — Actual itself is currency-agnostic.
+
+**Rules when presenting numbers to the user:**
+
+1. Always divide integer `amount` / `spent` / `balance` / `budgeted` fields by 100 and show them with **two decimal places**.
+2. **Never emit a currency symbol** (`₹`, `$`, `€`, `£`, etc.) unless the user has explicitly told you what currency they use in this conversation. Plain numbers like `89.89` or `−379.36` are correct.
+3. Never speculate about which minor unit it is (paise, cents, pence). Just say "89.89" — the user knows their own currency.
+4. The CLI's human-readable output may render an incorrect currency symbol — always trust the integer field from `--json` output, not the pretty print.
+
 ## Multi-Budget Behavior
 
 - `arc budgets list` discovers every budget file on the configured Actual server.
