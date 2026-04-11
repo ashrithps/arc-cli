@@ -21,7 +21,7 @@ Arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actua
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashrithgovind/arc-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 ```
 
 If you copied a payload-backed command from `budgetarc`, run that exact command instead. It bootstraps Arc directly into your current budget without any manual config.
@@ -31,7 +31,7 @@ If you copied a payload-backed command from `budgetarc`, run that exact command 
 The payload command is:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashrithgovind/arc-cli/main/install.sh | bash -s -- --payload '<json-payload>'
+curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --payload '<json-payload>'
 ```
 
 The payload contains your API URL, API key, sync id, and (optionally) an encryption password. Treat it like a secret and run it only on a trusted machine — it gives Arc full access to the budget it was generated for.

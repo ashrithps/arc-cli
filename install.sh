@@ -2,10 +2,10 @@
 # Arc CLI installer — one-line install for macOS (Linux works for CLI).
 #
 # Basic:
-#   curl -fsSL https://raw.githubusercontent.com/ashrithgovind/arc-cli/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 #
 # One-command payload bootstrap:
-#   curl -fsSL https://raw.githubusercontent.com/ashrithgovind/arc-cli/main/install.sh | bash -s -- \
+#   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- \
 #     --payload '<json-payload>'
 #
 # Source of truth: arc-cli-source/public/install.sh
@@ -20,7 +20,7 @@ APP_DIR="${ARC_HOME}/app"
 BIN_DIR="${HOME}/.local/bin"
 CLAUDE_CONFIG_DIR="${HOME}/Library/Application Support/Claude"
 CLAUDE_CONFIG_PATH="${CLAUDE_CONFIG_DIR}/claude_desktop_config.json"
-REPO_TARBALL_URL="${ARC_CLI_TARBALL_URL:-https://codeload.github.com/ashrithgovind/arc-cli/tar.gz/refs/heads/main}"
+REPO_TARBALL_URL="${ARC_CLI_TARBALL_URL:-https://codeload.github.com/ashrithps/arc-cli/tar.gz/refs/heads/main}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 PAYLOAD=""
