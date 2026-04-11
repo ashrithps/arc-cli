@@ -18,13 +18,15 @@ Arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actua
 - a terminal UI via `arc ui`
 - a stdio MCP server via `arc mcp` that exposes every data operation as a structured tool for agents
 
+Arc CLI connects to your budget hosted on [https://arc.moi](https://arc.moi). Once signed in, open **Settings → Apps** to find the one-command CLI installer that is pre-baked with your instance URL and credentials.
+
 ## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 ```
 
-If you copied a payload-backed command from `budgetarc`, run that exact command instead. It bootstraps Arc directly into your current budget without any manual config.
+If you copied a payload-backed command from the **Apps** section of your [https://arc.moi](https://arc.moi) settings, run that exact command instead. It bootstraps Arc directly into your current budget without any manual config.
 
 ### One-Command Payload Bootstrap
 
