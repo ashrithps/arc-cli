@@ -244,7 +244,15 @@ fi
 banner_top
 
 section "Preflight"
-need_cmd node && ok "node $(node --version)"
+need_cmd node
+NODE_VERSION="$(node --version)"
+NODE_MAJOR="$(printf '%s' "${NODE_VERSION}" | sed -E 's/^v([0-9]+)\..*/\1/')"
+if [[ "${NODE_MAJOR}" -lt 18 ]]; then
+  fail "Arc requires Node 18 or newer. Detected ${NODE_VERSION}."
+  info "Install a newer node (e.g. via mise, nvm, asdf, or nodejs.org) and retry."
+  exit 1
+fi
+ok "node ${NODE_VERSION}"
 need_cmd npm  && ok "npm  $(npm --version)"
 need_cmd curl && ok "curl $(curl --version | head -n1 | awk '{print $2}')"
 
@@ -284,7 +292,14 @@ ok "copied runtime to ${APP_DIR}"
 
 cd "${APP_DIR}"
 info "running npm install --omit=dev (this may take a moment)"
-npm install --omit=dev >/dev/null 2>&1
+NPM_LOG="$(mktemp)"
+if ! npm install --omit=dev >"${NPM_LOG}" 2>&1; then
+  fail "npm install failed — output below:"
+  cat "${NPM_LOG}" >&2
+  rm -f "${NPM_LOG}"
+  exit 1
+fi
+rm -f "${NPM_LOG}"
 ok "dependencies installed"
 
 chmod +x "${APP_DIR}/bin/arc.js"
