@@ -227,8 +227,13 @@ export async function createSplitTransaction(
   const hasTransfers = subtransactions.some(s => s.transfer_account);
 
   if (!hasTransfers) {
-    // Simple split — use addTransactions with subtransactions
+    // Simple split — use addTransactions with subtransactions on a parent
+    // record. Generate a client-side id so we can return it (the addTransactions
+    // IPC returns the literal string "ok" rather than ids — see addTransaction
+    // for the same workaround).
+    const parentId = crypto.randomUUID();
     const tx: TransactionCreate = {
+      id: parentId,
       date: parent.date,
       amount: parentAmount,
       payee_name: parent.payee_name,
@@ -248,7 +253,7 @@ export async function createSplitTransaction(
     );
 
     if (!result.success) throw new Error(result.error);
-    return result.data?.[0] || '';
+    return parentId;
   }
 
   // ── Advanced split with transfers ──

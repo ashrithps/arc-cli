@@ -43,12 +43,41 @@ export async function setBudgetCarryover(
   validateMonth(month);
   validateId(categoryId);
 
+  // Actual's setBudgetCarryover throws "No budget exists for month: …"
+  // when the month record hasn't been materialized yet (typical for far-
+  // future months). setBudgetAmount creates the month record as a side
+  // effect, so we call it first with the current value to be a no-op
+  // that still materialises the month. This avoids exposing an Actual
+  // implementation detail to callers.
+  let current = 0;
+  try {
+    const budget = await client.api.getBudgetMonth(month);
+    for (const g of (budget as any).categoryGroups || []) {
+      for (const c of g.categories || []) {
+        if (c.id === categoryId) current = c.budgeted || 0;
+      }
+    }
+  } catch (err: any) {
+    if (!/no budget exists for month/i.test(err?.message || '')) throw err;
+  }
+
   const result = await writer.write(
     `Set carryover: ${month} / ${categoryId} = ${flag}`,
-    () => client.api.setBudgetCarryover(month, categoryId, flag)
+    async () => {
+      await client.api.setBudgetAmount(month, categoryId, current);
+      await client.api.setBudgetCarryover(month, categoryId, flag);
+    }
   );
 
-  if (!result.success) throw new Error(result.error);
+  if (!result.success) {
+    if (/no budget exists for month/i.test(result.error || '')) {
+      throw new Error(
+        `Cannot set carryover for ${month}: Actual has no budget data for that month yet. ` +
+        `Carryover only works on months that have been materialised — use a current or near-future month.`
+      );
+    }
+    throw new Error(result.error);
+  }
 }
 
 export async function batchBudgetUpdate(
@@ -84,15 +113,24 @@ export async function transferBudget(
 
   const cents = validateAmount(amount);
 
-  // Get current amounts
-  const budget = await client.api.getBudgetMonth(month);
+  // Get current amounts. Actual's getBudgetMonth throws "No budget exists
+  // for month: …" for months it has not materialized yet (typically far-
+  // future months). setBudgetAmount on the same month works fine because
+  // it implicitly creates the month record. Tolerate the missing month
+  // by treating both current values as 0 — the new amounts we set below
+  // become the canonical values for that month.
   let fromCurrent = 0;
   let toCurrent = 0;
-  for (const g of (budget as any).categoryGroups || []) {
-    for (const c of g.categories || []) {
-      if (c.id === fromCategoryId) fromCurrent = c.budgeted || 0;
-      if (c.id === toCategoryId) toCurrent = c.budgeted || 0;
+  try {
+    const budget = await client.api.getBudgetMonth(month);
+    for (const g of (budget as any).categoryGroups || []) {
+      for (const c of g.categories || []) {
+        if (c.id === fromCategoryId) fromCurrent = c.budgeted || 0;
+        if (c.id === toCategoryId) toCurrent = c.budgeted || 0;
+      }
     }
+  } catch (err: any) {
+    if (!/no budget exists for month/i.test(err?.message || '')) throw err;
   }
 
   const result = await writer.write(

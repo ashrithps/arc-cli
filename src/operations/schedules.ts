@@ -113,7 +113,20 @@ export async function getUpcomingSchedules(client: ActualClient): Promise<any[]>
 }
 
 /**
- * Mark a schedule as completed (no more occurrences).
+ * Stop a schedule from generating new occurrences.
+ *
+ * Actual's API has no way to flip the `completed` flag from a client —
+ * `completed` is system-managed and `updateSchedule` rejects it with
+ * "Field completed is system-managed and not user-editable." The only
+ * way for a user to make a schedule stop generating is to delete it,
+ * which is what this function does. The deletion is logged so the
+ * intent is auditable.
+ *
+ * This is observably equivalent to "marking complete" — both produce a
+ * schedule that no longer appears in `arc schedules list` or generates
+ * new transactions. If you want to keep the schedule record around but
+ * pause it, use `arc schedules update` to set the recurrence endDate
+ * to today.
  */
 export async function completeSchedule(
   client: ActualClient,
@@ -122,8 +135,8 @@ export async function completeSchedule(
 ): Promise<void> {
   validateId(id);
   const result = await writer.write(
-    `Complete schedule: ${id}`,
-    () => client.api.updateSchedule(id, { completed: true } as any)
+    `Complete schedule (deletes the schedule): ${id}`,
+    () => client.api.deleteSchedule(id)
   );
   if (!result.success) throw new Error(result.error);
 }
