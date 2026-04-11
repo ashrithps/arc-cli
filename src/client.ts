@@ -394,8 +394,9 @@ export class ActualClient {
           },
         }
       );
-    } catch {
-      throw new Error('Failed to load budget. Check server URL and budget ID.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to load budget. Check server URL and budget ID. (${detail})`);
     }
 
     await this.syncWithRecovery('Initial sync', {

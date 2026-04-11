@@ -188,6 +188,11 @@ EOF
 
 # merge_claude_desktop_mcp ARC_BIN
 #   Adds an `arc` entry under mcpServers without dropping existing entries.
+#
+#   Uses the absolute path to the current `node` binary plus the arc.js entry
+#   point (not the shebang-bearing `arc` launcher) so that Claude Desktop —
+#   which spawns MCP child processes with a minimal PATH that typically does
+#   NOT include nvm/mise/asdf-managed node — can still resolve the runtime.
 merge_claude_desktop_mcp() {
   local arc_bin="$1"
   if [ ! -d "$HOME/Library/Application Support/Claude" ]; then
@@ -199,11 +204,19 @@ merge_claude_desktop_mcp() {
     warn "node not found — skipping Claude Desktop MCP merge"
     return 0
   fi
-  node - "$CLAUDE_CONFIG_PATH" "$arc_bin" <<'NODE'
+  local node_bin arc_entry
+  node_bin="$(command -v node)"
+  # Resolve to the real path so nvm/mise shims don't reappear and break the
+  # absolute-path guarantee on the Claude Desktop spawn side.
+  if command -v realpath >/dev/null 2>&1; then
+    node_bin="$(realpath "${node_bin}")"
+  fi
+  arc_entry="${APP_DIR}/bin/arc.js"
+  node - "$CLAUDE_CONFIG_PATH" "$node_bin" "$arc_entry" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
-const [configPath, arcPath] = process.argv.slice(2);
+const [configPath, nodeBin, arcEntry] = process.argv.slice(2);
 let config = {};
 if (fs.existsSync(configPath)) {
   try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { config = {}; }
@@ -211,7 +224,7 @@ if (fs.existsSync(configPath)) {
 if (!config.mcpServers || typeof config.mcpServers !== 'object') {
   config.mcpServers = {};
 }
-config.mcpServers.arc = { command: arcPath, args: ['mcp'] };
+config.mcpServers.arc = { command: nodeBin, args: [arcEntry, 'mcp'] };
 fs.mkdirSync(path.dirname(configPath), { recursive: true });
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 NODE
