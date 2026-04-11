@@ -3,19 +3,46 @@ import type { SafeWriter } from '../safe-writer.js';
 import type { Account } from '../types.js';
 import { validateId, validateName } from '../utils/validation.js';
 
-export async function listAccounts(client: ActualClient): Promise<Account[]> {
+/**
+ * Compute an account's balance by summing all its non-child transactions.
+ * Splits have parent transactions whose amount equals the total; we skip
+ * children (is_child) to avoid double-counting.
+ *
+ * @actual-app/api's getAccounts() returns accounts WITHOUT a balance
+ * field; there is no balance_current or similar on the raw Actual record.
+ * Balances must be computed from the transaction ledger.
+ */
+async function computeAccountBalance(client: ActualClient, accountId: string): Promise<number> {
+  try {
+    const txns = await client.api.getTransactions(accountId);
+    let balance = 0;
+    for (const t of txns) {
+      if (!t.is_child) balance += t.amount ?? 0;
+    }
+    return balance;
+  } catch {
+    return 0;
+  }
+}
+
+export async function listAccounts(client: ActualClient): Promise<Array<Account & { balance: number }>> {
   client.ensureConnected();
-  return await client.api.getAccounts();
+  const accounts = await client.api.getAccounts();
+  // Compute balances in parallel — each getTransactions call is a SQLite
+  // read, so parallelism is cheap and keeps the MCP tool latency low.
+  const balances = await Promise.all(
+    accounts.map((a: Account) => computeAccountBalance(client, a.id))
+  );
+  return accounts.map((a: Account, i: number) => ({ ...a, balance: balances[i] }));
 }
 
 export async function getAccountBalance(client: ActualClient, accountId: string): Promise<number> {
   client.ensureConnected();
   validateId(accountId);
-  // Use runQuery to get the balance
   const accounts = await client.api.getAccounts();
   const account = accounts.find((a: any) => a.id === accountId);
   if (!account) throw new Error(`Account not found: ${accountId}`);
-  return (account as any).balance_current ?? 0;
+  return computeAccountBalance(client, account.id);
 }
 
 export async function createAccount(
