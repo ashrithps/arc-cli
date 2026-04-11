@@ -18,7 +18,7 @@ import * as queries from './operations/queries.js';
 import { amountToCents, formatCurrency, printTable, printJson } from './utils/format.js';
 import { makeImportedId } from './utils/imported-id.js';
 import { parseInstallPayload } from './payload.js';
-import { startMcpServer } from './mcp/server.js';
+import { startMcpServer, startHttpMcpServer } from './mcp/server.js';
 import * as ui from './ui/views.js';
 import {
   isDaemonRunning,
@@ -1108,6 +1108,35 @@ export async function main(
 
   if (command === 'mcp') {
     try {
+      // `arc mcp --http` switches from stdio to a Streamable HTTP server
+      // that Claude.ai (web + mobile) and Cursor's remote-MCP feature
+      // can connect to over the network. Combine with cloudflare tunnel
+      // / tailscale funnel / ngrok to reach it from a phone.
+      const isHttp =
+        getFlag(flags, 'http') !== undefined ||
+        getFlag(flags, 'http') === '' ||
+        flags.http === '' ||
+        positional[0] === 'http' ||
+        process.argv.includes('--http');
+      if (isHttp) {
+        const portFlag = getFlag(flags, 'port') || getFlag(flags, 'http-port');
+        const port = portFlag ? Number.parseInt(portFlag, 10) : undefined;
+        const host = getFlag(flags, 'host') || getFlag(flags, 'http-host');
+        const token = getFlag(flags, 'token') || getFlag(flags, 'http-token') || process.env.ARC_MCP_HTTP_TOKEN;
+        const path = getFlag(flags, 'path') || getFlag(flags, 'http-path');
+        const handle = await startHttpMcpServer({ port, host, token, path });
+        // Hold the process open until SIGINT/SIGTERM.
+        const stop = async (signal: NodeJS.Signals) => {
+          console.error(`\nReceived ${signal}, shutting down arc mcp http…`);
+          await handle.close();
+          process.exit(0);
+        };
+        process.on('SIGINT', () => { void stop('SIGINT'); });
+        process.on('SIGTERM', () => { void stop('SIGTERM'); });
+        // The HTTP server keeps the event loop alive on its own.
+        return;
+      }
+
       await mcpLauncher();
     } catch (error: any) {
       console.error(`Error: ${error.message}`);

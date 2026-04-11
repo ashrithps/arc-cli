@@ -30,6 +30,9 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { ActualClient } from '../client.js';
 import { BackupManager } from '../backup.js';
 import { SafeWriter } from '../safe-writer.js';
@@ -827,10 +830,174 @@ async function withRealClient(): Promise<{
   };
 }
 
-// ── Production entry point ──────────────────────────────────────────────────
+// ── Production entry points ─────────────────────────────────────────────────
 
 export async function startMcpServer(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+}
+
+export interface HttpMcpServerOptions {
+  /** Port to listen on. Default 8765. */
+  port?: number;
+  /** Host to bind to. Default 127.0.0.1 (loopback only). Pass "0.0.0.0" to expose. */
+  host?: string;
+  /**
+   * Bearer token clients must present in the `Authorization: Bearer <token>`
+   * header. If omitted we generate a random one and print it on startup so
+   * the operator can copy it into Claude.ai / mobile / etc.
+   *
+   * Loopback-only deployments (default host 127.0.0.1) can run without a
+   * token by passing the empty string, but anything bound to a public
+   * interface MUST set a token — without it, anyone reaching the port can
+   * read and write the budget.
+   */
+  token?: string;
+  /** Optional fixed mount path. Default "/mcp". */
+  path?: string;
+}
+
+/**
+ * Start arc as a Streamable HTTP MCP server. This is the transport
+ * Claude.ai (web + mobile) and Cursor's remote-MCP feature use, which
+ * means once you tunnel the port (cloudflare tunnel, tailscale funnel,
+ * ngrok, etc.) the same 59 tools that Claude Desktop sees are reachable
+ * from anywhere on your phone.
+ *
+ * Architecture:
+ *   - One Node http.Server bound to host:port.
+ *   - On every POST /mcp the same `createMcpServer()` factory is run
+ *     against a fresh `StreamableHTTPServerTransport` (stateless mode —
+ *     each tool call is its own request, no session state on the server
+ *     side). The cached ActualClient inside `withRealClient()` is shared
+ *     across all requests just like in stdio mode.
+ *   - Bearer-token auth gates every request. The token is constant-time
+ *     compared to defeat timing attacks.
+ *
+ * Usage:
+ *   arc mcp --http                          # loopback only, random token
+ *   arc mcp --http --host 0.0.0.0 --token <secret>
+ *   arc mcp --http --port 9000 --token "$ARC_MCP_TOKEN"
+ */
+export async function startHttpMcpServer(opts: HttpMcpServerOptions = {}): Promise<{
+  url: string;
+  token: string;
+  close: () => Promise<void>;
+}> {
+  const port = opts.port ?? 8765;
+  const host = opts.host ?? '127.0.0.1';
+  const path = opts.path ?? '/mcp';
+  const token = opts.token ?? randomUUID();
+  const tokenBytes = Buffer.from(token, 'utf8');
+
+  const requireAuth = token.length > 0;
+  if (!requireAuth && host !== '127.0.0.1' && host !== 'localhost') {
+    throw new Error(
+      `Refusing to start arc mcp http on ${host}:${port} without an auth token. ` +
+      `Pass --token <secret> or bind to 127.0.0.1.`
+    );
+  }
+
+  // Constant-time bearer-token check. Reject any request without the
+  // exact token in the Authorization header so a public tunnel can't be
+  // probed by random scanners.
+  function checkAuth(req: IncomingMessage): boolean {
+    if (!requireAuth) return true;
+    const header = req.headers['authorization'];
+    if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
+    const presented = Buffer.from(header.slice('Bearer '.length).trim(), 'utf8');
+    if (presented.length !== tokenBytes.length) return false;
+    try {
+      return timingSafeEqual(presented, tokenBytes);
+    } catch {
+      return false;
+    }
+  }
+
+  const httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // CORS preflight: Claude.ai's mobile app issues an OPTIONS preflight
+    // before its first POST. Echo back the headers it asks for so the
+    // browser/SwiftUI client doesn't drop the request.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, mcp-session-id',
+        'Access-Control-Max-Age': '86400',
+      });
+      res.end();
+      return;
+    }
+
+    if (!req.url || !req.url.startsWith(path)) {
+      res.writeHead(404).end();
+      return;
+    }
+
+    if (!checkAuth(req)) {
+      res.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="arc"' }).end('Unauthorized');
+      return;
+    }
+
+    // Stateless mode: each request gets its own transport + server. The
+    // expensive Actual client is reused across requests via the module-
+    // level cache inside withRealClient(), so the per-request overhead
+    // is just the in-memory MCP plumbing.
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const server = createMcpServer();
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    try {
+      await server.connect(transport);
+      // The Node-flavoured StreamableHTTPServerTransport accepts the raw
+      // IncomingMessage/ServerResponse pair and parses the JSON body
+      // itself.
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      try {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      } catch { /* response may already be flushed */ }
+    } finally {
+      try { await transport.close(); } catch { /* best effort */ }
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    httpServer.once('error', reject);
+    httpServer.listen(port, host, () => {
+      httpServer.off('error', reject);
+      resolve();
+    });
+  });
+
+  const displayHost = host === '0.0.0.0' ? 'localhost' : host;
+  const url = `http://${displayHost}:${port}${path}`;
+
+  // Print the connection details so the operator can paste them into
+  // Claude.ai or any other remote-MCP client. We deliberately log to
+  // stderr because stdio mode would otherwise share stdout.
+  console.error('');
+  console.error(`  arc mcp ready (Streamable HTTP)`);
+  console.error(`    URL:   ${url}`);
+  if (requireAuth) {
+    console.error(`    Token: ${token}`);
+    console.error('');
+    console.error('  Add to Claude.ai → Settings → Connectors → Custom MCP Server:');
+    console.error(`    URL:                  <tunnel-url>${path}`);
+    console.error(`    Authorization header: Bearer ${token}`);
+  } else {
+    console.error('  Auth: disabled (loopback only).');
+  }
+  console.error('');
+
+  return {
+    url,
+    token,
+    close: async () => {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    },
+  };
 }

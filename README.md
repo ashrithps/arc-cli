@@ -44,6 +44,34 @@ The installer detects which agent tools you have on the machine and drops the Ar
 
 Arc also registers a `arc` entry in Claude Desktop's `claude_desktop_config.json` that runs `arc mcp`. The MCP server exposes one tool per operation in the catalog below, with the same argument names and validation as the CLI. Existing MCP servers in the config file are preserved — the installer only adds / updates the `arc` entry.
 
+### Remote MCP for Claude.ai web / mobile
+
+`arc mcp --http` runs the same 59 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+
+```bash
+# Loopback only, generates a random bearer token and prints it
+arc mcp --http
+
+# Custom port + token, ready to expose via tunnel
+arc mcp --http --port 8765 --token $(openssl rand -hex 32)
+
+# Tunnel it (example with cloudflare quick tunnel — no account needed)
+cloudflared tunnel --url http://127.0.0.1:8765
+# → https://random-words.trycloudflare.com
+```
+
+Then in Claude.ai → **Settings → Connectors → Add custom connector**:
+- **URL**: `https://random-words.trycloudflare.com/mcp`
+- **Authorization header**: `Bearer <token>`
+
+The remote server keeps the same `withRealClient` cache + 90s idle timeout, so a chat conversation pays the connect cost once and subsequent tool calls are instant.
+
+Security:
+- Bearer token is required for any non-loopback bind. Constant-time compared to defeat timing probes.
+- Default bind is `127.0.0.1` — pass `--host 0.0.0.0` only when intentionally exposing.
+- The token is printed on stderr at startup; redirect or capture it.
+- Anyone with the URL + token gets full read **and write** access to the budget. Treat the token like the Actual API key.
+
 ## Runtime
 
 - Installed app snapshot: `~/.arc-cli/app`
