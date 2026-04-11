@@ -130,6 +130,10 @@ async function handleAccounts(client: ActualClient, writer: SafeWriter, sub: str
     case 'balance': {
       const id = await accounts.resolveAccountId(client, requireFlag(flags, 'account', 'id'));
       const bal = await accounts.getAccountBalance(client, id);
+      // --json must return the integer minor-units value to stay
+      // consistent with every other arc command and the MCP contract.
+      // Human-readable mode renders the formatted decimal.
+      if (isJson(flags)) return printJson({ id, balance: bal });
       console.log(formatCurrency(bal));
       break;
     }
@@ -732,13 +736,13 @@ async function handleBudgets(client: ActualClient, writer: SafeWriter, sub: stri
       const income = await budgets.getIncomeForMonth(client, month);
       if (isJson(flags)) return printJson(income);
       console.log(`\nIncome for ${month}:`);
-      console.log(`  ${'Category'.padEnd(22)} ${'Budgeted'.padStart(12)} ${'Received'.padStart(12)} ${'Balance'.padStart(12)}`);
-      console.log(`  ${'─'.repeat(60)}`);
+      console.log(`  ${'Category'.padEnd(22)} ${'Budgeted'.padStart(12)} ${'Received'.padStart(12)}`);
+      console.log(`  ${'─'.repeat(48)}`);
       for (const c of income.categories) {
-        console.log(`  ${c.name.padEnd(22)} ${formatCurrency(c.budgeted).padStart(12)} ${formatCurrency(c.spent).padStart(12)} ${formatCurrency(c.balance).padStart(12)}`);
+        console.log(`  ${c.name.padEnd(22)} ${formatCurrency(c.budgeted).padStart(12)} ${formatCurrency(c.received).padStart(12)}`);
       }
-      console.log(`  ${'─'.repeat(60)}`);
-      console.log(`  ${'Total'.padEnd(22)} ${formatCurrency(income.totalBudgeted).padStart(12)} ${formatCurrency(income.totalSpent).padStart(12)} ${formatCurrency(income.totalBalance).padStart(12)}`);
+      console.log(`  ${'─'.repeat(48)}`);
+      console.log(`  ${'Total'.padEnd(22)} ${formatCurrency(income.totalBudgeted).padStart(12)} ${formatCurrency(income.totalReceived).padStart(12)}`);
       break;
     }
     case 'summary': case 'totals': {

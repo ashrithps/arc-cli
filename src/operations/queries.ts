@@ -108,11 +108,29 @@ export async function getAccountSummary(
   client.ensureConnected();
 
   const accounts = await client.api.getAccounts();
-  return accounts.map((a: any) => ({
+  // Actual's getAccounts() does not expose a balance field. Compute each
+  // account's balance from its transactions in parallel — same approach
+  // used by operations/accounts.ts listAccounts(). Skipping is_child
+  // transactions avoids double-counting splits.
+  const balances = await Promise.all(
+    accounts.map(async (a: any) => {
+      try {
+        const txns = await client.api.getTransactions(a.id);
+        let bal = 0;
+        for (const t of txns) {
+          if (!t.is_child) bal += t.amount ?? 0;
+        }
+        return bal;
+      } catch {
+        return 0;
+      }
+    })
+  );
+  return accounts.map((a: any, i: number) => ({
     name: a.name,
     id: a.id,
     type: a.type || 'checking',
-    balance: a.balance_current || 0,
+    balance: balances[i],
     offbudget: a.offbudget || false,
     closed: a.closed || false,
   }));
@@ -220,14 +238,20 @@ export async function getMonthlyTotals(
 
     try {
       const budget = await client.api.getBudgetMonth(m);
-      let income = 0;
-      let expenses = 0;
 
+      // Income comes from the top-level totalIncome field on the budget
+      // object, not from summing per-category `spent` on income groups.
+      // In Actual, income categories track BUDGETED targets, not received
+      // amounts — `c.spent` is always 0 for income categories. The actual
+      // received income is aggregated into `budget.totalIncome` by Actual
+      // itself. (This is why every monthly income previously read as 0.)
+      const income = (budget as any).totalIncome ?? 0;
+
+      let expenses = 0;
       for (const g of (budget as any).categoryGroups || []) {
+        if (g.is_income) continue;
         for (const c of g.categories || []) {
-          const spent = c.spent || 0;
-          if (g.is_income) income += spent;
-          else expenses += spent;
+          expenses += c.spent || 0;
         }
       }
 

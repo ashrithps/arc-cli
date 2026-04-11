@@ -107,32 +107,78 @@ export async function transferBudget(
 }
 
 /**
- * Get income summary for a month — total income budgeted/spent/balance.
+ * Get income summary for a month.
+ *
+ * Actual's per-category `spent` is always 0 for income categories — they
+ * track budgeted *targets*, not received money. The total received income
+ * lives at `budget.totalIncome`. For per-category received amounts we
+ * have to scan the transaction ledger and group by category id, since the
+ * budget object doesn't break down received income by category.
+ *
+ * Returns:
+ *   totalReceived  — sum of all positive (and negative) flows through
+ *                    income categories in the month, taken from
+ *                    budget.totalIncome (matches what the Actual UI shows).
+ *   totalBudgeted  — sum of budgeted amounts on income categories
+ *                    (planned income targets, often 0 for users who don't
+ *                    actively budget the income side).
+ *   categories     — per-category breakdown:
+ *                      budgeted: planned amount on the category
+ *                      received: sum of transactions in the category for
+ *                                this month (computed from the ledger)
  */
 export async function getIncomeForMonth(
   client: ActualClient,
   month: string
-): Promise<{ totalBudgeted: number; totalSpent: number; totalBalance: number; categories: any[] }> {
+): Promise<{
+  totalReceived: number;
+  totalBudgeted: number;
+  categories: { id: string; name: string; budgeted: number; received: number }[];
+}> {
   client.ensureConnected();
   validateMonth(month);
 
   const budget = await client.api.getBudgetMonth(month);
+  const totalReceived = (budget as any).totalIncome ?? 0;
   let totalBudgeted = 0;
-  let totalSpent = 0;
-  let totalBalance = 0;
-  const incomeCats: any[] = [];
+  const incomeCats: { id: string; name: string; budgeted: number; received: number }[] = [];
 
   for (const g of (budget as any).categoryGroups || []) {
     if (!g.is_income) continue;
     for (const c of g.categories || []) {
       totalBudgeted += c.budgeted || 0;
-      totalSpent += c.spent || 0;
-      totalBalance += c.balance || 0;
-      incomeCats.push({ name: c.name, budgeted: c.budgeted || 0, spent: c.spent || 0, balance: c.balance || 0 });
+      incomeCats.push({ id: c.id, name: c.name, budgeted: c.budgeted || 0, received: 0 });
     }
   }
 
-  return { totalBudgeted, totalSpent, totalBalance, categories: incomeCats };
+  // Compute received-per-category from the ledger. We iterate every
+  // account's transactions in the month window and accumulate by
+  // category id. This is O(accounts) sequential reads but cheap because
+  // each call is a SQLite scan over a small date range.
+  if (incomeCats.length > 0) {
+    const start = `${month}-01`;
+    // End of month: use day 31 since Actual's getTransactions tolerates
+    // overshoot dates and returns the same result as the real last day.
+    const end = `${month}-31`;
+    const accounts = await client.api.getAccounts();
+    const byCat: Record<string, number> = {};
+    for (const a of accounts) {
+      try {
+        const txns = await client.api.getTransactions((a as any).id, start, end);
+        for (const t of txns) {
+          if ((t as any).is_child) continue;
+          const cat = (t as any).category;
+          if (!cat) continue;
+          byCat[cat] = (byCat[cat] || 0) + ((t as any).amount || 0);
+        }
+      } catch { /* skip account on error */ }
+    }
+    for (const c of incomeCats) {
+      c.received = byCat[c.id] || 0;
+    }
+  }
+
+  return { totalReceived, totalBudgeted, categories: incomeCats };
 }
 
 /**

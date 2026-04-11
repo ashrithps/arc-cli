@@ -71,7 +71,13 @@ export async function addTransaction(
   tx: TransactionCreate
 ): Promise<string> {
   validateId(accountId);
-  const validated = validateTransaction({ ...tx, cleared: tx.cleared ?? true });
+  // @actual-app/api's `addTransactions` IPC returns the literal string "ok"
+  // — it does NOT return the assigned transaction ids. Actual does respect
+  // an `id` field on the input though, so we generate a UUID client-side
+  // and return it. This is the same pattern createSplitTransaction and
+  // createTransfer below already use.
+  const id = crypto.randomUUID();
+  const validated = validateTransaction({ ...tx, id, cleared: tx.cleared ?? true });
 
   const result = await writer.write(
     `Add transaction: ${tx.payee_name || tx.payee || 'unknown'} on ${tx.date}`,
@@ -79,7 +85,7 @@ export async function addTransaction(
   );
 
   if (!result.success) throw new Error(result.error);
-  return result.data?.[0] || '';
+  return id;
 }
 
 export async function importTransaction(
@@ -110,7 +116,15 @@ export async function addTransactions(
   opts?: { learnCategories?: boolean; runTransfers?: boolean }
 ): Promise<string[]> {
   validateId(accountId);
-  const validated = txs.map(tx => validateTransaction({ ...tx, cleared: tx.cleared ?? true }));
+  // Generate ids client-side: addTransactions IPC returns "ok" not ids.
+  // Actual respects the `id` field on input transactions, so we assign
+  // a UUID per row and return them in order.
+  const ids: string[] = [];
+  const validated = txs.map(tx => {
+    const id = crypto.randomUUID();
+    ids.push(id);
+    return validateTransaction({ ...tx, id, cleared: tx.cleared ?? true });
+  });
 
   const result = await writer.write(
     `Add ${validated.length} transactions`,
@@ -118,7 +132,7 @@ export async function addTransactions(
   );
 
   if (!result.success) throw new Error(result.error);
-  return Array.isArray(result.data) ? result.data : [];
+  return ids;
 }
 
 export async function importTransactions(

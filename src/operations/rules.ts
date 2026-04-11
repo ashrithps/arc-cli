@@ -37,7 +37,14 @@ export async function createRule(
   );
 
   if (!result.success) throw new Error(result.error);
-  return result.data;
+  // @actual-app/api's createRule returns the full rule object, not a bare
+  // id string. Normalize so the operation contract matches its declared
+  // `Promise<string>` return type. Callers that need the full record can
+  // call listRules() afterwards.
+  const data = result.data;
+  if (typeof data === 'string') return data;
+  if (data && typeof data === 'object' && typeof (data as any).id === 'string') return (data as any).id;
+  throw new Error('createRule did not return a recognizable id');
 }
 
 export async function updateRule(

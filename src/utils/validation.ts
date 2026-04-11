@@ -75,6 +75,10 @@ export function validateTransaction(tx: any): TransactionCreate {
     date: validateDate(tx.date),
   };
 
+  // Caller-supplied id (used by addTransaction/addTransactions/createTransfer
+  // /createSplitTransaction so we can return a stable id even though
+  // @actual-app/api's `addTransactions` IPC returns "ok" instead of ids).
+  if (tx.id) result.id = String(tx.id);
   if (tx.amount != null) result.amount = validateAmount(tx.amount);
   if (tx.payee_name) result.payee_name = String(tx.payee_name);
   if (tx.payee) result.payee = validateId(tx.payee);

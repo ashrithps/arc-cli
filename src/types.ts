@@ -106,6 +106,13 @@ export interface SubTransaction {
 }
 
 export interface TransactionCreate {
+  /**
+   * Optional caller-supplied id. Actual respects this when present, which
+   * lets us return a stable id from operations like addTransaction even
+   * though @actual-app/api's `addTransactions` IPC returns "ok" instead
+   * of the assigned ids.
+   */
+  id?: string;
   account?: string;
   date: string;
   amount?: number;
