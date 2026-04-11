@@ -488,6 +488,26 @@ export async function listRegisteredToolNames(): Promise<string[]> {
     .map(op => op.mcpTool);
 }
 
+/**
+ * Groups whose tool results include integer-minor-unit amount fields.
+ * Tools in these groups get a compact formatting reminder appended to
+ * their description at registration time.
+ */
+const AMOUNT_BEARING_GROUPS = new Set<PublicOperation['group']>([
+  'accounts',
+  'transactions',
+  'budgets',
+  'query',
+]);
+
+const AMOUNT_REMINDER =
+  '\n\nAmounts in the response are integer minor units (divide by 100 to get the decimal value, e.g. 37936 → 379.36). Render without any currency symbol unless the user has told you what currency they use.';
+
+function decorateDescription(op: PublicOperation): string {
+  if (!AMOUNT_BEARING_GROUPS.has(op.group)) return op.description;
+  return `${op.description}${AMOUNT_REMINDER}`;
+}
+
 /** The operations that will be registered, paired with their handlers. */
 export function enumerateRegisteredOperations(): Array<{
   op: PublicOperation;
@@ -519,9 +539,76 @@ export interface CreateMcpServerOptions {
   }>;
 }
 
+/**
+ * Agent playbook injected into the MCP `initialize` response as
+ * server-level instructions. Any MCP client that reads the `instructions`
+ * field (Claude Desktop, Cursor's MCP client, etc.) gets this as durable
+ * system-level guidance for every conversation — the skill file is NOT
+ * loaded by those clients, so this is the only channel they have for
+ * learning Arc's conventions.
+ *
+ * Keep this short enough that a small context-budget client is not
+ * overwhelmed, but complete enough that agents stop:
+ *   - reaching for `arc_budgets_*` when a query tool is the right answer,
+ *   - rendering numbers without dividing by 100,
+ *   - inventing currency symbols.
+ */
+const MCP_INSTRUCTIONS = `Arc exposes Actual Budget as a set of read/write tools. When you answer a
+user question with these tools, follow these rules:
+
+AMOUNTS AND CURRENCY
+- Every amount field returned by any arc_* tool (spent, budgeted, balance,
+  amount, income, expenses, net, etc.) is an INTEGER in MINOR UNITS.
+  To convert to a human-readable value you MUST divide by 100 and show
+  two decimal places. Example: 37936 means 379.36; -2017298 means
+  -20172.98; 8989 means 89.89.
+- Actual Budget is currency-agnostic. You do NOT know the user's currency.
+  NEVER emit any currency symbol (no ₹, no $, no €, no £, no USD/INR/EUR
+  prefixes, nothing). Return plain decimal numbers like "379.36" or
+  "-20,172.98". If the user has explicitly told you their currency in
+  this conversation, you may use that symbol; otherwise stay neutral.
+- Never speculate about which minor unit the integer represents (cents,
+  paise, pence, etc.). Just divide by 100 and present the decimal.
+
+WHICH TOOL TO USE
+Most "how much did I spend" style questions are answered by the QUERY
+tools, not the BUDGETS tools. Budgets tools describe the user's planned
+envelopes and only return non-zero data when the user has actively
+budgeted amounts for the period. If they have not, budget totals are
+ZERO — do not report that as "no spending".
+
+- "How much did I spend this month?" → arc_query_spending (per-category
+  actual spend from transactions) OR arc_query_monthly (month totals).
+- "Monthly totals over time / trends" → arc_query_monthly or arc_query_trends.
+- "Top spending categories" → arc_query_top.
+- "Spend by payee" → arc_query_payee.
+- "Spend in one category" → arc_query_category.
+- "Uncategorized transactions" → arc_query_uncategorized.
+- "Account balance / balance history" → arc_accounts_balance or
+  arc_query_balance_history / arc_query_monthly_balances.
+- "Raw transaction list for a period" → arc_transactions_list.
+
+Use the BUDGETS tools only when the question is explicitly about the
+user's planned envelopes:
+- "Am I over budget for X?" → arc_budgets_month.
+- "What did I budget for X?" → arc_budgets_month.
+- "Show me my income for the month" → arc_budgets_income.
+- "Set/move a budgeted amount" → arc_budgets_set_amount /
+  arc_budgets_set_carryover / arc_budgets_transfer.
+
+SCOPE
+Arc only talks to Actual Budget. There is no other backend, database,
+or storage layer — do not mention Convex, Postgres, or anything else.
+Advanced tools (delete, merge, batch_*, custom query, budgets_switch)
+mutate state irreversibly; prefer safer tools and double-check inputs
+before calling them.`;
+
 /** Build an MCP server whose tools are driven by the public operation registry. */
 export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer {
-  const server = new McpServer({ name: 'arc', version: '1.0.0' });
+  const server = new McpServer(
+    { name: 'arc', version: '1.0.0' },
+    { instructions: MCP_INSTRUCTIONS }
+  );
 
   const { client: injectedClient, writer: injectedWriter, resolveDeps } = options;
 
@@ -540,10 +627,17 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   };
 
   for (const { op, handler } of enumerateRegisteredOperations()) {
+    // Suffix the description of any tool that returns amount-bearing data
+    // with a compact minor-units reminder. MCP clients that do not load
+    // SKILL.md (like Claude Desktop) read the per-tool description when
+    // deciding how to present results — this is the cheapest place to
+    // stop them formatting 37936 as "37,936" or "₹37,936".
+    const description = decorateDescription(op);
+
     server.registerTool(
       op.mcpTool,
       {
-        description: op.description,
+        description,
         inputSchema: op.inputSchema,
       },
       async (input: Record<string, any>) => {
