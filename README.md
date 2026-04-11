@@ -1,4 +1,4 @@
-# Arc CLI
+# arc cli
 
 <!--
 ⚠️  GENERATED FILE — do not edit directly.
@@ -12,13 +12,13 @@ END:ARC_OPERATIONS_README markers is generated from the registry at
 src/public-surface/operation-registry.ts.
 -->
 
-Arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actualbudget.org). One install gives you:
+arc cli connects to your budget hosted on [arc](https://arc.moi). Once signed in, open **Settings → Apps** to find the one-command CLI installer that is pre-baked with your instance URL and credentials.
 
-- a `arc` command-line interface covering accounts, transactions, categories, payees, rules, schedules, budget months, and reports
+arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actualbudget.org). One install gives you:
+
+- an `arc` command-line interface covering accounts, transactions, categories, payees, rules, schedules, budget months, and reports
 - a terminal UI via `arc ui`
 - a stdio MCP server via `arc mcp` that exposes every data operation as a structured tool for agents
-
-Arc CLI connects to your budget hosted on [https://arc.moi](https://arc.moi). Once signed in, open **Settings → Apps** to find the one-command CLI installer that is pre-baked with your instance URL and credentials.
 
 ## Install
 
@@ -26,7 +26,7 @@ Arc CLI connects to your budget hosted on [https://arc.moi](https://arc.moi). On
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 ```
 
-If you copied a payload-backed command from the **Apps** section of your [https://arc.moi](https://arc.moi) settings, run that exact command instead. It bootstraps Arc directly into your current budget without any manual config.
+If you copied a payload-backed command from the **Apps** section of your [arc](https://arc.moi) settings, run that exact command instead. It bootstraps arc directly into your current budget without any manual config.
 
 ### One-Command Payload Bootstrap
 
@@ -36,15 +36,15 @@ The payload command is:
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --payload '<json-payload>'
 ```
 
-The payload contains your API URL, API key, sync id, and (optionally) an encryption password. Treat it like a secret and run it only on a trusted machine — it gives Arc full access to the budget it was generated for.
+The payload contains your API URL, API key, sync id, and (optionally) an encryption password. Treat it like a secret and run it only on a trusted machine — it gives arc full access to the budget it was generated for.
 
 ### Agent Install Matrix
 
-The installer detects which agent tools you have on the machine and drops the Arc skill into each one's conventional location, plus a fallback under `~/.config/arc/SKILL.md`. Expected targets include Claude Code, Codex, Cursor, Windsurf / Codeium, Cline / Roo, Amp, Gemini CLI / Antigravity, GitHub Copilot, Goose, OpenCode, Trae, Kilo, Augment, Aider, and VS Code's skills folder. Agents you don't use stay untouched.
+The installer detects which agent tools you have on the machine and drops the arc skill into each one's conventional location, plus a fallback under `~/.config/arc/SKILL.md`. Expected targets include Claude Code, Codex, Cursor, Windsurf / Codeium, Cline / Roo, Amp, Gemini CLI / Antigravity, GitHub Copilot, Goose, OpenCode, Trae, Kilo, Augment, Aider, and VS Code's skills folder. Agents you don't use stay untouched.
 
 ### MCP Behavior
 
-Arc also registers a `arc` entry in Claude Desktop's `claude_desktop_config.json` that runs `arc mcp`. The MCP server exposes one tool per operation in the catalog below, with the same argument names and validation as the CLI. Existing MCP servers in the config file are preserved — the installer only adds / updates the `arc` entry.
+arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.json` that runs `arc mcp`. The MCP server exposes one tool per operation in the catalog below, with the same argument names and validation as the CLI. Existing MCP servers in the config file are preserved — the installer only adds / updates the `arc` entry.
 
 ### Remote MCP for Claude.ai web / mobile
 
