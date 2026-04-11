@@ -43,21 +43,18 @@ export const sym = {
 };
 
 // ── Formatters ────────────────────────────────────────────────
-export function formatAmount(cents: number, symbol: string = '$'): string {
+// Arc only talks to Actual Budget, which is currency-agnostic — it stores
+// every amount as an integer in minor units (amount / 100) regardless of the
+// user's actual currency. We deliberately do NOT emit a currency symbol in
+// CLI output, because guessing wrong ($, ₹, €, £, …) silently misleads the
+// user and any agent that parses the output. Callers that know their
+// currency can pass a symbol explicitly.
+export function formatAmount(cents: number, symbol: string = ''): string {
   const abs = Math.abs(cents / 100);
   const formatted = abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const str = `${symbol}${formatted}`;
   if (cents > 0) return colors.credit('+' + str);
   if (cents < 0) return colors.debit('-' + str);
-  return colors.muted(str);
-}
-
-export function formatINR(paise: number): string {
-  const abs = Math.abs(paise / 100);
-  const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const str = `₹${formatted}`;
-  if (paise > 0) return colors.credit(str);
-  if (paise < 0) return colors.debit(str);
   return colors.muted(str);
 }
 

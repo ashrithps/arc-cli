@@ -433,7 +433,8 @@ function renderTransactions() {
     if (t.notes) {
       const b = t.notes.indexOf('•');
       if (b > 0) notes = t.notes.slice(b + 1).trim();
-      else if (!t.notes.includes('INR')) notes = t.notes;
+      // Strip generic "XXX (FX rate: N)" FX-rule prefixes without a • separator.
+      else if (!/\b[A-Z]{3}\s*\(FX rate:/.test(t.notes)) notes = t.notes;
     }
     notes = notes.slice(0, notesW - 1).padEnd(notesW);
 
@@ -1268,7 +1269,8 @@ txnList.key(['space'], () => {
   if (t.notes) {
     const b = t.notes.indexOf('•');
     if (b > 0) notes = t.notes.slice(b + 1).trim();
-    else if (!t.notes.includes('INR')) notes = t.notes;
+    // Strip generic "XXX (FX rate: N)" FX-rule prefixes without a • separator.
+    else if (!/\b[A-Z]{3}\s*\(FX rate:/.test(t.notes)) notes = t.notes;
   }
   editFields.notes.setValue(notes);
 

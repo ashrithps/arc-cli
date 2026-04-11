@@ -15,12 +15,18 @@ export function amountToCents(amount: number): number {
 }
 
 /**
- * Format cents as currency string.
- * 1234, "₹" → "₹12.34"
+ * Format cents as a signed decimal amount string, without any currency
+ * symbol by default. Arc only talks to Actual Budget, which is currency-
+ * agnostic, so we must not assume the user's currency. Callers that know
+ * their currency can pass a symbol explicitly.
+ *
+ *   1234   → "12.34"
+ *   -5000  → "-50.00"
+ *   1234, "$" → "$12.34"  (caller-supplied symbol)
  */
-export function formatCurrency(cents: number, symbol: string = '₹'): string {
+export function formatCurrency(cents: number, symbol: string = ''): string {
   const abs = Math.abs(centsToAmount(cents));
-  const formatted = abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatted = abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return cents < 0 ? `-${symbol}${formatted}` : `${symbol}${formatted}`;
 }
 

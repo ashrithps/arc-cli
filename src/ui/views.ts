@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { colors, sym, formatAmount, formatINR, header, subheader, row, divider, badge, statusDot } from './theme.js';
+import { colors, sym, formatAmount, header, subheader, row, divider, badge, statusDot } from './theme.js';
 
 // ── Brand ─────────────────────────────────────────────────────
 
