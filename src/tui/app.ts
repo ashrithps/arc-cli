@@ -324,8 +324,11 @@ function buildCategoryMap() {
 let txnListIndex: number[] = []; // maps list row → index in state.transactions (-1 for headers)
 
 function formatAmount(cents: number): string {
+  // Currency-agnostic: Actual Budget is currency-agnostic, so the TUI
+  // renders plain decimals without a currency symbol. See src/ui/theme.ts
+  // for the CLI-side rationale.
   const abs = Math.abs(cents / 100);
-  const str = abs >= 1000 ? `$${abs.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : `$${abs.toFixed(2)}`;
+  const str = abs >= 1000 ? abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : abs.toFixed(2);
   if (cents > 0) return `{${T.green}-fg}+${str}{/${T.green}-fg}`;
   if (cents < 0) return `{${T.red}-fg}-${str}{/${T.red}-fg}`;
   return `{${T.dim}-fg}${str}{/${T.dim}-fg}`;
