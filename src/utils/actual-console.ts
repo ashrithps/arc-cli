@@ -48,6 +48,15 @@ export function installActualConsoleFilter(): void {
     process.env.ARC_DISABLE_OUTPUT_FILTER === '1' ||
     process.env.ARCTUAL_DISABLE_OUTPUT_FILTER === '1'
   ) return;
+  // Direct argv check: this module is imported by `client.ts` at module-top,
+  // which is in turn imported by `index.ts` at module-top, which means the
+  // filter is installed BEFORE `tui/app.ts`'s env-var sets run (ESM hoists
+  // imports above executable code). `process.argv` is populated before any
+  // JS runs, so checking it here works where env-var sets don't. If the
+  // user invoked `arc ui` — or any path whose last positional is `ui` —
+  // skip installation so blessed's ANSI sequences pass through unbuffered.
+  const args = process.argv.slice(2);
+  if (args.includes('ui')) return;
   installed = true;
 
   const originalLog = console.log.bind(console);

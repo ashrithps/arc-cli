@@ -656,22 +656,68 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
 }
 
 /**
- * Cached client for the lifetime of the MCP process.
+ * Cached client with an idle-timeout so the MCP server doesn't hold the
+ * Actual session (and its SQLite lock, memory, and sync-traffic footprint)
+ * indefinitely.
  *
- * Previously every tool call paid the full connect cost (5–10s for cloud
- * budget download + sync), which meant each Claude Desktop turn was
- * painfully slow AND created SQLite lock contention windows when multiple
- * tool calls from the same turn overlapped. We now lazily open a single
- * `ActualClient` on the first tool call and reuse it across subsequent
- * calls. A SIGINT/SIGTERM handler disconnects cleanly on shutdown.
+ * The old per-tool-call connect pattern paid 5–10s on every Claude tool
+ * call and created parallel-connect races when a single Claude turn fired
+ * multiple tools. Caching for the whole MCP process lifetime fixed the
+ * latency but kept the Actual session alive for hours, blocking the TUI
+ * and other arc processes from acquiring the same DB files.
  *
- * A simple in-flight mutex (`connectInFlight`) serialises the first
- * connect even if two tools fire in parallel, preventing duplicate
- * init()s from racing each other.
+ * The middle ground: cache for the duration of an active chat, then
+ * release when idle. A 90-second default covers typical Claude Desktop
+ * conversations (one tool call per turn, turns a few seconds apart)
+ * while still freeing the DB between conversations. Tunable via the
+ * `ARC_MCP_IDLE_TIMEOUT_MS` env var; set to `0` to disable the timeout
+ * entirely (lifetime-cached), or set to `-1` to revert to the legacy
+ * per-call reconnect behaviour.
+ *
+ * A connect-in-flight mutex serialises the first connect when multiple
+ * parallel tool calls race, preventing duplicate `actualApi.init()`s.
  */
+const DEFAULT_IDLE_TIMEOUT_MS = 90_000;
+
+function resolveIdleTimeoutMs(): number {
+  const raw = process.env.ARC_MCP_IDLE_TIMEOUT_MS;
+  if (raw === undefined) return DEFAULT_IDLE_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_IDLE_TIMEOUT_MS;
+  return parsed;
+}
+
 let cachedDeps: McpHandlerDeps | null = null;
 let connectInFlight: Promise<McpHandlerDeps> | null = null;
+let idleTimer: NodeJS.Timeout | null = null;
 let shutdownInstalled = false;
+
+async function releaseCachedClient(): Promise<void> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  const current = cachedDeps;
+  cachedDeps = null;
+  if (!current) return;
+  try {
+    await current.client.disconnect();
+  } catch {
+    try { await current.client.api.shutdown(); } catch { /* best effort */ }
+  }
+}
+
+function scheduleIdleRelease(): void {
+  const timeoutMs = resolveIdleTimeoutMs();
+  if (timeoutMs <= 0) return; // 0 = lifetime-cached, negative = legacy path uses this
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    void releaseCachedClient();
+  }, timeoutMs);
+  // Don't let the idle timer keep the process alive on its own.
+  idleTimer.unref?.();
+}
 
 async function ensureCachedClient(): Promise<McpHandlerDeps> {
   if (cachedDeps) return cachedDeps;
@@ -687,19 +733,9 @@ async function ensureCachedClient(): Promise<McpHandlerDeps> {
 
     if (!shutdownInstalled) {
       shutdownInstalled = true;
-      const shutdown = async () => {
-        const current = cachedDeps;
-        cachedDeps = null;
-        if (!current) return;
-        try {
-          await current.client.disconnect();
-        } catch {
-          try { await current.client.api.shutdown(); } catch { /* best effort */ }
-        }
-      };
-      process.on('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });
-      process.on('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });
-      process.on('beforeExit', () => { void shutdown(); });
+      process.on('SIGINT', () => { void releaseCachedClient().finally(() => process.exit(0)); });
+      process.on('SIGTERM', () => { void releaseCachedClient().finally(() => process.exit(0)); });
+      process.on('beforeExit', () => { void releaseCachedClient(); });
     }
 
     return deps;
@@ -713,19 +749,45 @@ async function ensureCachedClient(): Promise<McpHandlerDeps> {
 }
 
 /**
- * Production dep resolver: returns the cached `ActualClient` + `SafeWriter`,
- * opening them lazily on first use. `cleanup` is a no-op because we keep
- * the connection alive for the lifetime of the MCP process; the signal
- * handlers installed inside `ensureCachedClient` tear things down at exit.
+ * Production dep resolver. Behaviour is controlled by ARC_MCP_IDLE_TIMEOUT_MS:
+ *
+ * - `> 0` (default 90_000): cache the client, auto-release after N ms of idle.
+ *   Each tool call resets the idle timer so active conversations stay fast.
+ * - `0`: cache for the lifetime of the MCP process (never release).
+ * - `< 0`: legacy path — open + disconnect per call. Paid 5–10s per tool.
  */
 async function withRealClient(): Promise<{
   deps: McpHandlerDeps;
   cleanup: () => Promise<void>;
 }> {
+  const timeoutMs = resolveIdleTimeoutMs();
+
+  if (timeoutMs < 0) {
+    // Legacy per-call path.
+    const client = ActualClient.fromEnv();
+    await client.connect();
+    const backup = new BackupManager();
+    const writer = new SafeWriter(client, backup);
+    return {
+      deps: { client, writer },
+      cleanup: async () => {
+        try {
+          await client.disconnect();
+        } catch {
+          try { await client.api.shutdown(); } catch { /* best effort */ }
+        }
+      },
+    };
+  }
+
+  // Cached path (timeoutMs >= 0). Reset idle timer on every call so an
+  // active conversation keeps the client warm; it releases only after a
+  // full idle window with no activity.
   const deps = await ensureCachedClient();
+  if (timeoutMs > 0) scheduleIdleRelease();
   return {
     deps,
-    cleanup: async () => { /* no-op: client lives for the MCP session */ },
+    cleanup: async () => { /* no-op: client lives for the idle window */ },
   };
 }
 
