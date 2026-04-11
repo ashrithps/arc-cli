@@ -1,12 +1,8 @@
 import type { ActualClient } from '../client.js';
 import type { SafeWriter } from '../safe-writer.js';
-import type { Transaction, TransactionCreate, SubTransaction, ImportResult, Rule } from '../types.js';
+import type { Transaction, TransactionCreate, SubTransaction, ImportResult } from '../types.js';
 import { validateId, validateDate, validateTransaction, validateSplitAmounts } from '../utils/validation.js';
-
-interface FxAccountMetadata {
-  currency: string;
-  rate: number;
-}
+import { parseFxAccountMetadata, parseFxNote, getAccountFxMap } from './fx.js';
 
 function formatFxRate(rate: number): string {
   return Number(rate.toFixed(6)).toString();
@@ -21,47 +17,40 @@ function buildFxTransferNotes(localAmountCents: number, currency: string, rate: 
   return notes ? `${prefix} • ${notes}` : prefix;
 }
 
-function parseFxAccountMetadata(rules: Rule[], accountId: string): FxAccountMetadata | null {
-  for (const rule of rules) {
-    if (rule.stage !== 'post') continue;
-    const hasAccountCondition = rule.conditions?.some(
-      c => c.field === 'account' && c.op === 'is' && c.value === accountId
-    );
-    if (!hasAccountCondition) continue;
-
-    const noteAction = rule.actions?.find(a => a.field === 'notes' && typeof a.value === 'string');
-    const amountAction = rule.actions?.find(a => a.field === 'amount');
-    const noteTemplate = String(noteAction?.value || noteAction?.options?.template || '');
-    const amountTemplate = String(amountAction?.options?.template || amountAction?.value || '');
-
-    const noteMatch = noteTemplate.match(/\}\}\s+([A-Z]{3})\s+\(FX rate:\s*([0-9.]+)\)/);
-    const amountMatch = amountTemplate.match(/mul amount\s+([0-9.]+)/);
-    if (!noteMatch || !amountMatch) continue;
-
-    const currency = noteMatch[1];
-    const noteRate = parseFloat(noteMatch[2]);
-    const amountRate = parseFloat(amountMatch[1]);
-    if (!Number.isFinite(noteRate) || !Number.isFinite(amountRate)) continue;
-
-    return { currency, rate: amountRate || noteRate };
-  }
-
-  return null;
-}
-
 export async function listTransactions(
   client: ActualClient,
   accountId: string,
   startDate?: string,
   endDate?: string
-): Promise<Transaction[]> {
+): Promise<Array<Transaction & { native?: { amount: number; currency: string; rate: number; cleanNotes: string } }>> {
   client.ensureConnected();
   validateId(accountId);
 
   if (startDate) validateDate(startDate);
   if (endDate) validateDate(endDate);
 
-  return await client.api.getTransactions(accountId, startDate, endDate);
+  const txns = await client.api.getTransactions(accountId, startDate, endDate);
+
+  // Annotate each transaction with parsed FX info if its notes carry an
+  // FX prefix (the convention "<native> <CCC> (FX rate: N) • <notes>"
+  // installed by the user's FX rules). The parser returns an unsigned
+  // native amount because FX rules typically format the prefix without
+  // a sign — we apply the base amount's sign so callers see the same
+  // direction (debit/credit) on both `amount` and `native.amount`.
+  return txns.map((t: any) => {
+    const fx = parseFxNote(t.notes);
+    if (!fx) return t;
+    const sign = (t.amount ?? 0) < 0 ? -1 : 1;
+    return {
+      ...t,
+      native: {
+        amount: sign * fx.nativeAmount,
+        currency: fx.currency,
+        rate: fx.rate,
+        cleanNotes: fx.cleanNotes,
+      },
+    };
+  });
 }
 
 export async function addTransaction(

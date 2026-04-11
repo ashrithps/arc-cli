@@ -70,6 +70,31 @@ Actual stores every amount as an **integer in minor units** (`amount = majorUnit
 3. Never speculate about which minor unit it is (paise, cents, pence). Just say "89.89" — the user knows their own currency.
 4. The CLI's human-readable output may render an incorrect currency symbol — always trust the integer field from `--json` output, not the pretty print.
 
+### Foreign-currency accounts (FX)
+
+Many users hold accounts in non-base currencies (INR, EUR, AED, GBP, etc.) and set up Actual rules that auto-convert incoming amounts to the base currency and prepend a marker to the notes. arc parses those rules and surfaces the result on every read tool.
+
+**`arc accounts list` and `arc query accounts`** add three fields per account when an FX rule is configured:
+
+- `currency` — ISO-4217 code (e.g. `"INR"`)
+- `fxRate` — the multiplier the rule applies (native → base)
+- `nativeBalance` — recovered balance in the native currency, integer minor units (still divide by 100 for display)
+
+When these are present, the account is denominated in that currency. Show `nativeBalance / 100` with the currency code — that is what the user sees in their bank app. The plain `balance` field is the base-currency value; use it for cross-account math, never for display in a foreign-currency account.
+
+**`arc transactions list`** adds a `native` object on each transaction whose notes carry an FX prefix:
+
+- `native.amount` — native-currency minor units
+- `native.currency` — ISO-4217 code
+- `native.rate` — FX rate applied
+- `native.cleanNotes` — notes with the FX prefix stripped
+
+Use `native.amount` and `native.cleanNotes` when displaying transactions from a foreign-currency account. The raw `amount` and `notes` are post-FX and confusing for the user.
+
+**No FX rule on an account?** No `currency` / `native` field is returned. Display plain decimal, no symbol.
+
+**Never extrapolate** one account's currency to another or to the budget as a whole. Each account stands alone. Only emit a currency symbol next to a number when that specific number came from an account with a known currency.
+
 ## Multi-Budget Behavior
 
 - `arc budgets list` discovers every budget file on the configured Actual server.

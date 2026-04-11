@@ -570,6 +570,42 @@ AMOUNTS AND CURRENCY
 - Never speculate about which minor unit the integer represents (cents,
   paise, pence, etc.). Just divide by 100 and present the decimal.
 
+FOREIGN-CURRENCY ACCOUNTS (FX)
+
+Some accounts hold balances in a currency different from the budget's
+base currency. Users set this up via Actual rules that auto-convert
+incoming amounts and prepend a marker to the notes. arc detects these
+rules and surfaces the data on every read tool that returns accounts or
+transactions:
+
+- arc_accounts_list / arc_query_accounts: each row may include
+    currency:      ISO-4217 code of the account's native currency
+    fxRate:        the multiplier the rule applies (native → base)
+    nativeBalance: the recovered balance in the account's native currency
+                   minor units (still divide by 100 for display).
+  When these are present, the account is denominated in that currency.
+  Display the nativeBalance with the currency code (e.g. "1,543.27 INR")
+  rather than the base-currency balance — that's what the user sees in
+  their banking app.
+
+- arc_transactions_list: each row may include a "native" object with
+    amount:     native-currency minor units for this transaction
+    currency:   ISO-4217 code
+    rate:       FX rate that was applied
+    cleanNotes: notes with the FX prefix stripped
+  Use native.amount for display (divide by 100), and use cleanNotes
+  instead of notes to avoid showing the user "500.00 INR (FX rate:
+  0.01109) • Coffee" when they just want "Coffee".
+
+When an account has no FX rule, its balance is in the budget's base
+currency and there is no "currency" / "nativeBalance" / "native" field.
+In that case fall back to plain decimal display with no symbol.
+
+CRITICAL: even when you know a per-account currency, do NOT extrapolate
+it to other accounts or to the budget as a whole. Each account stands
+alone. Only emit a currency symbol next to a number when that specific
+number came from an account with a known currency.
+
 WHICH TOOL TO USE
 Most "how much did I spend" style questions are answered by the QUERY
 tools, not the BUDGETS tools. Budgets tools describe the user's planned

@@ -2,6 +2,7 @@ import type { ActualClient } from '../client.js';
 import type { SafeWriter } from '../safe-writer.js';
 import type { Account } from '../types.js';
 import { validateId, validateName } from '../utils/validation.js';
+import { getAccountFxMap } from './fx.js';
 
 /**
  * Compute an account's balance by summing all its non-child transactions.
@@ -25,15 +26,38 @@ async function computeAccountBalance(client: ActualClient, accountId: string): P
   }
 }
 
-export async function listAccounts(client: ActualClient): Promise<Array<Account & { balance: number }>> {
+export async function listAccounts(client: ActualClient): Promise<Array<Account & {
+  balance: number;
+  currency?: string;
+  fxRate?: number;
+  nativeBalance?: number;
+}>> {
   client.ensureConnected();
   const accounts = await client.api.getAccounts();
   // Compute balances in parallel — each getTransactions call is a SQLite
   // read, so parallelism is cheap and keeps the MCP tool latency low.
-  const balances = await Promise.all(
-    accounts.map((a: Account) => computeAccountBalance(client, a.id))
-  );
-  return accounts.map((a: Account, i: number) => ({ ...a, balance: balances[i] }));
+  const [balances, fxMap] = await Promise.all([
+    Promise.all(accounts.map((a: Account) => computeAccountBalance(client, a.id))),
+    getAccountFxMap(client),
+  ]);
+  return accounts.map((a: Account, i: number) => {
+    const baseBalance = balances[i];
+    const fx = fxMap[a.id];
+    if (!fx) return { ...a, balance: baseBalance };
+    // Recover the native-currency balance by dividing the stored base
+    // amount by the FX rate. This is approximate because every individual
+    // transaction was rounded to the nearest base-currency cent before
+    // storage, but it's accurate enough for "show me my account balance
+    // in INR/EUR/etc" use cases. Always trust `balance` (base cents) when
+    // doing math; `nativeBalance` is for display.
+    return {
+      ...a,
+      balance: baseBalance,
+      currency: fx.currency,
+      fxRate: fx.rate,
+      nativeBalance: Math.round(baseBalance / fx.rate),
+    };
+  });
 }
 
 export async function getAccountBalance(client: ActualClient, accountId: string): Promise<number> {

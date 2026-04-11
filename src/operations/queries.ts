@@ -1,6 +1,7 @@
 import type { ActualClient } from '../client.js';
 import type { Transaction } from '../types.js';
 import { formatCurrency } from '../utils/format.js';
+import { getAccountFxMap, parseFxNote } from './fx.js';
 
 export async function runCustomQuery(client: ActualClient, query: any): Promise<any> {
   client.ensureConnected();
@@ -104,36 +105,59 @@ export async function getSpendingSummary(
 
 export async function getAccountSummary(
   client: ActualClient
-): Promise<{ name: string; id: string; type: string; balance: number; offbudget: boolean; closed: boolean }[]> {
+): Promise<Array<{
+  name: string;
+  id: string;
+  type: string;
+  balance: number;
+  offbudget: boolean;
+  closed: boolean;
+  currency?: string;
+  fxRate?: number;
+  nativeBalance?: number;
+}>> {
   client.ensureConnected();
 
   const accounts = await client.api.getAccounts();
   // Actual's getAccounts() does not expose a balance field. Compute each
   // account's balance from its transactions in parallel — same approach
   // used by operations/accounts.ts listAccounts(). Skipping is_child
-  // transactions avoids double-counting splits.
-  const balances = await Promise.all(
-    accounts.map(async (a: any) => {
-      try {
-        const txns = await client.api.getTransactions(a.id);
-        let bal = 0;
-        for (const t of txns) {
-          if (!t.is_child) bal += t.amount ?? 0;
+  // transactions avoids double-counting splits. We also pull the per-
+  // account FX map so each row can advertise its native currency.
+  const [balances, fxMap] = await Promise.all([
+    Promise.all(
+      accounts.map(async (a: any) => {
+        try {
+          const txns = await client.api.getTransactions(a.id);
+          let bal = 0;
+          for (const t of txns) {
+            if (!t.is_child) bal += t.amount ?? 0;
+          }
+          return bal;
+        } catch {
+          return 0;
         }
-        return bal;
-      } catch {
-        return 0;
-      }
-    })
-  );
-  return accounts.map((a: any, i: number) => ({
-    name: a.name,
-    id: a.id,
-    type: a.type || 'checking',
-    balance: balances[i],
-    offbudget: a.offbudget || false,
-    closed: a.closed || false,
-  }));
+      })
+    ),
+    getAccountFxMap(client),
+  ]);
+  return accounts.map((a: any, i: number) => {
+    const fx = fxMap[a.id];
+    const row: any = {
+      name: a.name,
+      id: a.id,
+      type: a.type || 'checking',
+      balance: balances[i],
+      offbudget: a.offbudget || false,
+      closed: a.closed || false,
+    };
+    if (fx) {
+      row.currency = fx.currency;
+      row.fxRate = fx.rate;
+      row.nativeBalance = Math.round(balances[i] / fx.rate);
+    }
+    return row;
+  });
 }
 
 /**
