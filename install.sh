@@ -48,11 +48,47 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ─── Pretty output ──────────────────────────────────────────────────────────
+# Detect a terminal with colour support. Degrades to plain text when piped to
+# a file or a non-colour TTY so grep-based tests and CI logs stay readable.
+if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && [[ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]]; then
+  BOLD="$(tput bold)"
+  DIM="$(tput dim)"
+  RED="$(tput setaf 1)"
+  GREEN="$(tput setaf 2)"
+  YELLOW="$(tput setaf 3)"
+  BLUE="$(tput setaf 4)"
+  CYAN="$(tput setaf 6)"
+  RESET="$(tput sgr0)"
+else
+  BOLD=""; DIM=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; RESET=""
+fi
+
+section() { printf "\n%s▸%s %s%s%s\n" "${BOLD}${BLUE}" "${RESET}" "${BOLD}" "$1" "${RESET}"; }
+ok()      { printf "  %s✓%s %s\n" "${GREEN}" "${RESET}" "$1"; }
+warn()    { printf "  %s!%s %s\n" "${YELLOW}" "${RESET}" "$1"; }
+fail()    { printf "  %s✗%s %s\n" "${RED}" "${RESET}" "$1" >&2; }
+info()    { printf "  %s%s%s\n" "${DIM}" "$1" "${RESET}"; }
+
+banner_top() {
+  printf "\n"
+  printf "  %s╭──────────────────────╮%s\n" "${BOLD}${CYAN}" "${RESET}"
+  printf "  %s│%s  %sArc CLI installer%s  %s│%s\n" "${BOLD}${CYAN}" "${RESET}" "${BOLD}" "${RESET}" "${BOLD}${CYAN}" "${RESET}"
+  printf "  %s╰──────────────────────╯%s\n" "${BOLD}${CYAN}" "${RESET}"
+}
+
+banner_done() {
+  printf "\n"
+  printf "  %s╭──────────────────────╮%s\n" "${BOLD}${GREEN}" "${RESET}"
+  printf "  %s│%s   %s✓ Arc installed%s    %s│%s\n" "${BOLD}${GREEN}" "${RESET}" "${BOLD}" "${RESET}" "${BOLD}${GREEN}" "${RESET}"
+  printf "  %s╰──────────────────────╯%s\n" "${BOLD}${GREEN}" "${RESET}"
+}
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    echo "Missing required command: $1" >&2
+    fail "Missing required command: $1"
     exit 1
   fi
 }
@@ -66,6 +102,7 @@ install_skill() {
   mkdir -p "$dir"
   cp "$SKILL_FILE" "$dir/SKILL.md"
   SKILL_INSTALLED="$SKILL_INSTALLED $name"
+  ok "$name → $dir"
 }
 
 # install_agent_skills
@@ -139,11 +176,13 @@ EOF
   # Generic fallback: any agent can discover ~/.config/arc/SKILL.md
   mkdir -p "$HOME/.config/arc"
   cp "$SKILL_FILE" "$HOME/.config/arc/SKILL.md"
+  ok "fallback → ~/.config/arc/SKILL.md"
 
+  # Summary line retained verbatim so tests that grep it keep working.
   if [ -n "$SKILL_INSTALLED" ]; then
-    echo "  ✓ Agent skills installed:$SKILL_INSTALLED"
+    info "Agent skills installed:$SKILL_INSTALLED"
   else
-    echo "  ✓ Skill file at: ~/.config/arc/SKILL.md"
+    info "Skill file at: ~/.config/arc/SKILL.md"
   fi
 }
 
@@ -151,9 +190,13 @@ EOF
 #   Adds an `arc` entry under mcpServers without dropping existing entries.
 merge_claude_desktop_mcp() {
   local arc_bin="$1"
-  [ -d "$HOME/Library/Application Support/Claude" ] || return 0
+  if [ ! -d "$HOME/Library/Application Support/Claude" ]; then
+    info "Claude Desktop not detected — skipping MCP merge"
+    return 0
+  fi
   mkdir -p "$CLAUDE_CONFIG_DIR"
   if ! command -v node >/dev/null 2>&1; then
+    warn "node not found — skipping Claude Desktop MCP merge"
     return 0
   fi
   node - "$CLAUDE_CONFIG_PATH" "$arc_bin" <<'NODE'
@@ -172,6 +215,7 @@ config.mcpServers.arc = { command: arcPath, args: ['mcp'] };
 fs.mkdirSync(path.dirname(configPath), { recursive: true });
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 NODE
+  ok "merged arc into claude_desktop_config.json"
 }
 
 # ─── Skills-only mode ───────────────────────────────────────────────────────
@@ -180,24 +224,29 @@ NODE
 
 if [[ "$SKILLS_ONLY" -eq 1 ]]; then
   if [[ -z "$SKILL_FILE_OVERRIDE" ]]; then
-    echo "--skills-only requires --skill-file <path>" >&2
+    fail "--skills-only requires --skill-file <path>"
     exit 2
   fi
   SKILL_FILE="$SKILL_FILE_OVERRIDE"
   if [[ ! -f "$SKILL_FILE" ]]; then
-    echo "Skill file not found: $SKILL_FILE" >&2
+    fail "Skill file not found: $SKILL_FILE"
     exit 2
   fi
+  section "Installing agent skills"
   install_agent_skills
+  section "Claude Desktop MCP"
   merge_claude_desktop_mcp "${BIN_DIR}/arc"
   exit 0
 fi
 
 # ─── Full install ───────────────────────────────────────────────────────────
 
-need_cmd node
-need_cmd npm
-need_cmd curl
+banner_top
+
+section "Preflight"
+need_cmd node && ok "node $(node --version)"
+need_cmd npm  && ok "npm  $(npm --version)"
+need_cmd curl && ok "curl $(curl --version | head -n1 | awk '{print $2}')"
 
 # When piped via `curl | bash`, BASH_SOURCE is unset so we cannot resolve a
 # script directory. In that case SCRIPT_DIR stays empty and we fall through
@@ -212,52 +261,74 @@ cleanup() {
 }
 trap cleanup EXIT
 
+section "Runtime source"
 if [[ -n "${SCRIPT_DIR}" && -f "${SCRIPT_DIR}/package.json" && -f "${SCRIPT_DIR}/bin/arc.js" && -d "${SCRIPT_DIR}/src" ]]; then
   SOURCE_DIR="${SCRIPT_DIR}"
+  ok "using local checkout: ${SCRIPT_DIR}"
 else
+  info "downloading ${REPO_TARBALL_URL}"
   curl -fsSL "${REPO_TARBALL_URL}" | tar -xzf - -C "${WORK_DIR}"
   SOURCE_DIR="$(find "${WORK_DIR}" -maxdepth 1 -type d -name 'arc-cli-*' | head -n 1)"
   if [[ -z "${SOURCE_DIR}" ]]; then
-    echo "Failed to download arc-cli runtime snapshot." >&2
+    fail "Failed to download arc-cli runtime snapshot."
     exit 1
   fi
+  ok "extracted to ${WORK_DIR}"
 fi
 
+section "Installing runtime"
 mkdir -p "${ARC_HOME}" "${BIN_DIR}"
 rm -rf "${APP_DIR}"
 cp -R "${SOURCE_DIR}" "${APP_DIR}"
+ok "copied runtime to ${APP_DIR}"
 
 cd "${APP_DIR}"
-npm install --omit=dev >/dev/null
+info "running npm install --omit=dev (this may take a moment)"
+npm install --omit=dev >/dev/null 2>&1
+ok "dependencies installed"
+
 chmod +x "${APP_DIR}/bin/arc.js"
 ln -snf "${APP_DIR}/bin/arc.js" "${BIN_DIR}/arc"
+ok "launcher at ${BIN_DIR}/arc"
 
 # Skill file ships inside the installed app snapshot.
 SKILL_FILE="${APP_DIR}/skill/SKILL.md"
 
+section "Installing agent skills"
 install_agent_skills
+
+section "Claude Desktop MCP"
 merge_claude_desktop_mcp "${BIN_DIR}/arc"
 
 if [[ -n "${PAYLOAD}" ]]; then
-  "${BIN_DIR}/arc" auth bootstrap --payload "${PAYLOAD}"
+  section "Bootstrapping budget"
+  if "${BIN_DIR}/arc" auth bootstrap --payload "${PAYLOAD}" >/tmp/arc-bootstrap.log 2>&1; then
+    ok "budget linked and credentials saved"
+  else
+    fail "auth bootstrap failed — see /tmp/arc-bootstrap.log"
+    cat /tmp/arc-bootstrap.log >&2 || true
+    exit 1
+  fi
 fi
 
-# Check PATH
+banner_done
+
+printf "\n"
+printf "  %sCLI%s       %s\n" "${DIM}" "${RESET}" "${BIN_DIR}/arc"
+printf "  %sConfig%s    %s\n" "${DIM}" "${RESET}" "${ARC_HOME}/config.json"
+printf "  %sSkill%s     %s\n" "${DIM}" "${RESET}" "${HOME}/.config/arc/SKILL.md"
+printf "  %sMCP%s       %s\n" "${DIM}" "${RESET}" "${CLAUDE_CONFIG_PATH}"
+printf "\n"
+printf "  %sTry:%s\n" "${BOLD}" "${RESET}"
+printf "    arc config show --json\n"
+printf "    arc budgets list --json\n"
+printf "    arc ui\n"
+
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-  echo ""
-  echo "  Add to your shell profile (~/.zshrc or ~/.bashrc):"
-  echo ""
-  echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
-  echo ""
+  printf "\n"
+  warn "${BIN_DIR} is not on your PATH."
+  printf "    Add to ~/.zshrc or ~/.bashrc:\n"
+  printf "      export PATH=\"\$HOME/.local/bin:\$PATH\"\n"
 fi
 
-echo "Arc installed."
-echo "CLI: ${BIN_DIR}/arc"
-echo "Config: ${ARC_HOME}/config.json"
-echo "Skill fallback: ${HOME}/.config/arc/SKILL.md"
-echo "Claude MCP: ${CLAUDE_CONFIG_PATH}"
-echo
-echo "Try:"
-echo "  arc config show --json"
-echo "  arc budgets list --json"
-echo "  arc ui"
+printf "\n"
