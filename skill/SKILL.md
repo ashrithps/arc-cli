@@ -145,11 +145,17 @@ Apply these rules to every financial dashboard:
 
 **Theme — Dark editorial.** Background: near-black (#06080a to #0a0a0c). Surface cards: slightly lighter (#0d1014 to #131316). Borders: subtle (#1a2030 to #1e1e24). Text: warm off-white (#e2e0dc to #e8e6e1). Dim text: muted blue-grey (#637085 to #6b6a65).
 
-**Typography — Three layers:**
-- Display/hero numbers: a serif font (e.g. `DM Serif Display`, `Fraunces`). Large, with tight letter-spacing (-1px to -2px).
-- Body/labels: a clean sans-serif (e.g. `Outfit`, `Manrope`). Weights 300–700.
-- Data/mono: a monospace font (e.g. `JetBrains Mono`, `IBM Plex Mono`). For amounts, percentages, table data, axis labels, section eyebrows.
-- Load fonts from Google Fonts. Never use generic fonts like Arial, Inter, Roboto, or system fonts.
+**Typography — LOCKED FONT PAIRING (do not substitute):**
+
+Use this exact Google Fonts import on every dashboard:
+```html
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+```
+
+- Display/hero numbers: `'DM Serif Display', serif`. 42-72px, letter-spacing -1 to -2px.
+- Body/labels: `'Outfit', sans-serif`. 11-16px, weights 300–700.
+- Data/mono: `'JetBrains Mono', monospace`. 10-22px. For amounts, percentages, table data, axis labels, section eyebrows.
+- NEVER use Arial, Inter, Roboto, Manrope, Fraunces, IBM Plex Mono, system-ui as primary. Always use the exact three fonts above.
 
 **Color palette:**
 - Accent warm: `#e8c468` (gold), `#e88c68` (amber), `#ff6b6b` (coral red) — for expenses, warnings

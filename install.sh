@@ -135,11 +135,11 @@ This is the default. Only deviate if the user explicitly says "use a different s
 
 ## Implementation
 
-Generate a **self-contained single HTML file** with inline CSS and JS. Use Chart.js from CDN for charts. Serve via `python3 -m http.server` and open in browser.
+Generate a **self-contained single HTML file** with inline CSS and JS. Use Chart.js from CDN (`https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js`) for charts. Serve via `python3 -m http.server` and open in browser.
 
-## Branding
+## Branding — NON-NEGOTIABLE
 
-Every dashboard MUST include the arc nav bar at the very top of `<body>`:
+Every page MUST start with this nav bar as the very first element inside `<body>`. It must always be present, sticky at the top, and link to https://arc.moi. Never mention "Actual Budget" anywhere — only "arc" (lowercase).
 
 ```html
 <nav class="arc-nav">
@@ -150,49 +150,538 @@ Every dashboard MUST include the arc nav bar at the very top of `<body>`:
 </nav>
 ```
 
-Sticky, blurred translucent background. Footer links to `https://arc.moi` with text "arc" (lowercase). Never mention "Actual Budget" — only "arc".
+Footer: link to `https://arc.moi` with text "arc", monospace, uppercase letter-spacing, muted color.
 
-## Design System
+### Nav bar CSS (copy exactly, adapt background rgba to page theme):
 
-**Theme — Dark editorial.** Background: near-black (#06080a to #0a0a0c). Surfaces: #0d1014 to #131316. Borders: #1a2030 to #1e1e24. Text: warm off-white (#e2e0dc to #e8e6e1). Dim: #637085 to #6b6a65.
-
-**Typography — Three layers:**
-- Display: serif (DM Serif Display, Fraunces). Large, letter-spacing -1 to -2px.
-- Body: sans-serif (Outfit, Manrope). Weights 300-700.
-- Data: monospace (JetBrains Mono, IBM Plex Mono). For amounts, axes, eyebrows.
-- Load from Google Fonts. Never use Arial, Inter, Roboto, or system fonts.
-
-**Colors:**
-- Warm: #e8c468 (gold), #e88c68 (amber), #ff6b6b (coral) — expenses
-- Cool: #4ecdc4 (teal), #68c4e8 (sky), #5f9df7 (blue) — income, positive
-- Supporting: #a468e8 (purple), #e868b4 (pink), #68e8a4 (green), #c4e868 (lime)
-- CSS variables for everything. 8-10 distinct category colors.
-
-**Layout:** Max 1100-1200px centered. 48px top padding. Stat cards: 3-4 col grid, colored top-edge. Section headings: mono uppercase 10-11px, letter-spacing 4px, with extending divider line. Chart panels: 16px border-radius, 28-32px padding.
-
-**Components:**
-- Hero total: enormous serif number, dimmed decimal, subtitle badge
-- Donut: 68% cutout, 3px bg-matching border, 4px segment border-radius, center label
-- Bar charts: 5-6px radius, current month in teal vs red
-- Line/area: 2px stroke, 3px points, 0.05 alpha fill, 0.35 tension
-- Category cards: 3px colored left border, name + pct header, mono amount, 4px animated progress bar
-- Data tables: no outer border, row borders, hover highlight, inline bars
-- Heatmaps: 5-level intensity, rounded cells, hover scale
-
-**Animation:** Staggered fadeUp (0.5-0.6s, 0.06s cascade). Bar width 0→target over 0.8-1s cubic-bezier(0.22,1,0.36,1). Counter: 1.2s easeOutCubic. Charts: 1000-1200ms easeOutQuart. Hover: translateY(-2px).
-
-**Grain overlay:**
 ```css
-body::before {
-  content: ''; position: fixed; inset: 0;
-  background-image: url("data:image/svg+xml,...feTurbulence...");
-  pointer-events: none; z-index: 9999;
+.arc-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(10, 10, 12, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 32px;
+  display: flex;
+  align-items: center;
+}
+
+.arc-nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.arc-nav img {
+  height: 26px;
+  width: auto;
+}
+
+.arc-nav .arc-wordmark {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.5px;
 }
 ```
 
-**Responsive:** 900px → single column. 560px → stacked cards, smaller fonts.
+## Design System — ALWAYS Dark Mode
 
-**Numbers:** .toLocaleString() with 2 decimals. Axes: Xk for thousands. Net: +/− prefix.
+Every dashboard MUST use this dark theme. Never generate light-mode dashboards unless the user explicitly asks.
+
+### CSS Variables (use these exactly)
+
+```css
+:root {
+  --bg: #0a0a0c;
+  --surface: #131316;
+  --surface-hover: #1a1a1f;
+  --border: #1e1e24;
+  --text: #e8e6e1;
+  --text-dim: #6b6a65;
+  --text-muted: #3d3d3f;
+  --accent: #e8c468;
+  --red: #e85d5d;
+  --green: #5de88a;
+  --cat-1: #e8c468;
+  --cat-2: #e88c68;
+  --cat-3: #e86868;
+  --cat-4: #68c4e8;
+  --cat-5: #a468e8;
+  --cat-6: #e868b4;
+  --cat-7: #68e8a4;
+  --cat-8: #8c9ee8;
+  --cat-9: #c4e868;
+}
+```
+
+For multi-chart pages with income/expense duality, use this alternate palette:
+
+```css
+:root {
+  --bg: #06080a;
+  --surface: #0d1014;
+  --surface-2: #131820;
+  --border: #1a2030;
+  --text: #e2e0dc;
+  --text-dim: #637085;
+  --text-muted: #2e3848;
+  --accent: #4ecdc4;
+  --warm: #ff6b6b;
+  --gold: #feca57;
+  --blue: #5f9df7;
+  --green: #4ecdc4;
+  --purple: #a78bfa;
+}
+```
+
+### Global reset
+
+```css
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Outfit', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+```
+
+### Typography — LOCKED FONT PAIRING
+
+Use this exact Google Fonts import on every dashboard. These are the standard arc fonts — do not substitute:
+
+```html
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+```
+
+Three layers:
+- **Display/hero numbers**: `'DM Serif Display', serif` — 42-72px, letter-spacing -1 to -2px
+- **Body/labels**: `'Outfit', sans-serif` — 11-16px, weights 300-700
+- **Data/amounts/eyebrows**: `'JetBrains Mono', monospace` — 10-22px
+
+NEVER use Arial, Inter, Roboto, Manrope, Fraunces, IBM Plex Mono, system-ui, or sans-serif as primary. Always use the exact three fonts above.
+
+### Grain overlay (adds subtle texture)
+
+```css
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+```
+
+### Optional radial glow (atmospheric depth)
+
+```css
+body::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(78, 205, 196, 0.03) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 100%, rgba(255, 107, 107, 0.02) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+```
+
+### Layout
+
+```css
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+}
+```
+
+### Section headings
+
+```css
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.section-header h2 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.section-header .divider {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+```
+
+Usage: `<div class="section-header"><h2>Category Breakdown</h2><div class="divider"></div></div>`
+
+### Hero total (big number display)
+
+```css
+.hero-total .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 4px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.hero-total .amount {
+  font-family: 'DM Serif Display', serif;
+  font-size: 72px;
+  font-weight: 400;
+  letter-spacing: -2px;
+  line-height: 1;
+}
+
+.hero-total .amount .decimal {
+  font-size: 36px;
+  color: var(--text-dim);
+}
+```
+
+Animate the total counting up from 0:
+
+```javascript
+function animateTotal(el, target, duration = 1200) {
+  const start = performance.now();
+  (function tick(now) {
+    const t = Math.min((now - start) / duration, 1);
+    const ease = 1 - Math.pow(1 - t, 3);
+    el.textContent = (target * ease).toLocaleString(undefined, {
+      minimumFractionDigits: 2, maximumFractionDigits: 2
+    });
+    if (t < 1) requestAnimationFrame(tick);
+  })(performance.now());
+}
+```
+
+### Stat cards (summary row)
+
+```css
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 48px;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Colored top accent — use nth-child for different colors */
+.stat-card::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+}
+
+.stat-card:nth-child(1)::after { background: linear-gradient(90deg, #ff6b6b, transparent); }
+.stat-card:nth-child(2)::after { background: linear-gradient(90deg, #4ecdc4, transparent); }
+.stat-card:nth-child(3)::after { background: linear-gradient(90deg, #feca57, transparent); }
+.stat-card:nth-child(4)::after { background: linear-gradient(90deg, #a78bfa, transparent); }
+
+.stat-card .stat-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.stat-card .stat-value {
+  font-family: 'DM Serif Display', serif;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -1px;
+}
+```
+
+### Chart panels
+
+```css
+.chart-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px;
+}
+```
+
+### Category cards (grid)
+
+```css
+.categories {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.cat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 3px colored left edge per category */
+.cat-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 100%;
+  border-radius: 12px 0 0 12px;
+}
+
+.cat-card:nth-child(1)::before { background: var(--cat-1); }
+/* ... repeat for each category color */
+
+.cat-card:hover {
+  background: var(--surface-hover);
+  transform: translateY(-2px);
+}
+
+.cat-card .cat-name { font-size: 13px; font-weight: 500; }
+.cat-card .cat-pct { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); }
+
+.cat-card .cat-amount {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 12px;
+}
+
+/* Progress bar */
+.cat-bar-bg { width: 100%; height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.cat-bar { height: 100%; border-radius: 4px; width: 0%; transition: width 1s cubic-bezier(0.22, 1, 0.36, 1); }
+```
+
+### Data tables
+
+```css
+.month-table { width: 100%; border-collapse: collapse; }
+
+.month-table thead th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 12px 16px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+
+.month-table thead th:first-child { text-align: left; }
+
+.month-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.month-table tbody tr:hover { background: var(--surface-hover); }
+
+.month-table td {
+  padding: 14px 16px;
+  font-size: 13px;
+}
+
+.month-table td:not(:first-child) {
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.val-expense { color: #ff6b6b; }
+.val-income { color: #4ecdc4; }
+.val-net-pos { color: #4ecdc4; }
+.val-net-neg { color: #ff6b6b; }
+```
+
+### Animations
+
+```css
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Apply to elements with staggered delays */
+.animated {
+  opacity: 0;
+  animation: fadeUp 0.5s ease forwards;
+}
+```
+
+Stagger delays: 0.06-0.08s per item. Example: `.cat-card:nth-child(1) { animation-delay: 0.1s; }` etc.
+
+### Chart.js configuration patterns
+
+**Donut chart:**
+```javascript
+{
+  type: 'doughnut',
+  data: {
+    datasets: [{
+      backgroundColor: COLORS,
+      borderColor: '#0a0a0c',
+      borderWidth: 3,
+      borderRadius: 4,
+      spacing: 2,
+    }]
+  },
+  options: {
+    cutout: '68%',
+    animation: { duration: 1200, easing: 'easeOutQuart' },
+    plugins: { legend: { display: false } }
+  }
+}
+```
+
+**Bar chart:**
+```javascript
+{
+  type: 'bar',
+  data: {
+    datasets: [{
+      backgroundColor: 'rgba(255, 107, 107, 0.55)',
+      borderColor: '#ff6b6b',
+      borderWidth: 1,
+      borderRadius: 6,
+      borderSkipped: false,
+    }]
+  },
+  options: {
+    animation: { duration: 1000, easing: 'easeOutQuart' },
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { family: "'JetBrains Mono'", size: 10 } } },
+      y: { grid: { color: '#111820' }, ticks: { font: { family: "'JetBrains Mono'", size: 10 }, callback: v => v >= 1000 ? (v/1000).toFixed(0) + 'k' : v } }
+    }
+  }
+}
+```
+
+**Line/area chart:**
+```javascript
+{
+  type: 'line',
+  data: {
+    datasets: [{
+      borderColor: '#4ecdc4',
+      backgroundColor: 'rgba(78, 205, 196, 0.05)',
+      borderWidth: 2,
+      pointRadius: 3,
+      fill: true,
+      tension: 0.35,
+    }]
+  }
+}
+```
+
+**Tooltip style (use for all charts):**
+```javascript
+tooltip: {
+  backgroundColor: '#131316',
+  titleColor: '#e8e6e1',
+  bodyColor: '#e8e6e1',
+  borderColor: '#1e1e24',
+  borderWidth: 1,
+  cornerRadius: 8,
+  padding: 12,
+  bodyFont: { family: "'JetBrains Mono'" },
+}
+```
+
+### Responsive
+
+```css
+@media (max-width: 900px) {
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .categories { grid-template-columns: 1fr 1fr; }
+  .two-col { grid-template-columns: 1fr; }
+  .hero { flex-direction: column; }
+  h1 { font-size: 36px; }
+}
+
+@media (max-width: 560px) {
+  .stats-row { grid-template-columns: 1fr; }
+  .categories { grid-template-columns: 1fr; }
+  .container { padding: 32px 16px 60px; }
+  h1 { font-size: 28px; }
+  .hero-total .amount { font-size: 44px; }
+}
+```
+
+### Number formatting
+
+- Always: `.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })`
+- Axis labels: abbreviate thousands as `Xk`
+- Net values: prefix with `+` or `−`
+- Never emit currency symbols unless the user has explicitly stated their currency
+
+### Footer
+
+```html
+<footer>
+  <span class="powered"><a href="https://arc.moi" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">arc</a></span>
+  <span class="timestamp" id="ts"></span>
+</footer>
+```
+
+```css
+footer {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+}
+
+footer span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+```
+
+Timestamp JS:
+```javascript
+document.getElementById('ts').textContent = 'Generated ' +
+  new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+```
 DASHEOF
   ok "arc-dashboard-design skill installed"
 }
