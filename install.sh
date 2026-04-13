@@ -116,19 +116,22 @@ install_dashboard_skill() {
   cat > "$dash_dir/SKILL.md" <<'DASHEOF'
 ---
 name: arc-dashboard-design
-description: "Create distinctive, production-grade financial dashboard HTML pages for arc budget data. Use when the user asks to visualize spending, build a dashboard, or generate an HTML report from their financial data."
+description: "Create distinctive, production-grade financial frontend pages for arc budget data. Activates for ANY frontend, HTML page, dashboard, report, or visual output involving financial or arc data. Enforces arc branding and dark editorial design system by default."
 ---
 
 # Arc Dashboard Design
 
-This skill guides creation of beautiful financial dashboards for arc budget data.
+This skill is the **default styling authority** for any frontend, HTML page, or visual output involving the user's financial data. Apply this design system to ALL generated frontends unless the user explicitly requests a different style.
 
 ## When to use
 
-Activate this skill when the user asks to:
-- Build a dashboard, report, or HTML visualization of their budget data
-- Show spending, trends, or account data as a web page
-- Create any visual/graphical output from arc query results
+Activate this skill for ANY request that produces a frontend or visual output, including but not limited to:
+- Dashboards, reports, summaries, or HTML pages
+- Spending breakdowns, trend visualizations, account views
+- Any chart, table, or graphical representation of arc/budget data
+- Landing pages, one-off pages, or any web content tied to financial data
+
+This is the default. Only deviate if the user explicitly says "use a different style", "light theme", "no arc branding", etc.
 
 ## Implementation
 

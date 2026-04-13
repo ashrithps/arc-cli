@@ -100,11 +100,13 @@ Use `native.amount` and `native.cleanNotes` when displaying transactions from a 
 
 ## Building Financial Dashboards
 
-When the user asks for a visual dashboard, report, or HTML page showing their financial data, generate a **self-contained single HTML file** with inline CSS and JS. Use Chart.js from CDN (`https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js`) for charts. Serve it via `python3 -m http.server` and open it in the browser.
+Any time the user asks for ANY frontend, HTML page, dashboard, report, or visual output involving their financial data, apply the arc dashboard design system below. This is the **default** — only deviate if the user explicitly requests a different style (e.g. "light theme", "no branding", "use Material UI").
+
+Generate a **self-contained single HTML file** with inline CSS and JS. Use Chart.js from CDN (`https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js`) for charts. Serve it via `python3 -m http.server` and open it in the browser.
 
 ### Branding
 
-Every dashboard MUST include the arc nav bar at the very top of the `<body>`, before any other content:
+Every page MUST include the arc nav bar at the very top of the `<body>`, before any other content. This is non-negotiable — the logo must always be present and fixed/sticky at the top:
 
 ```html
 <nav class="arc-nav">
