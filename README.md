@@ -89,6 +89,73 @@ Security:
 - Payload-backed install commands embed credentials. Only run them on trusted machines.
 - Per-budget encryption passwords are stored in the credential store after the first successful unlock.
 
+## Dashboard Recipes
+
+arc ships with 13 pre-built dashboard recipes that any AI agent can use to generate beautiful, self-contained HTML financial dashboards from your budget data. Recipes live in [`skill/recipes/`](skill/recipes/).
+
+| Recipe | Description |
+|---|---|
+| [recipe-spending](skill/recipes/recipe-spending.md) | Monthly spending breakdown with donut chart and category cards |
+| [recipe-trends](skill/recipes/recipe-trends.md) | Month-on-month income vs expense trends with heatmap |
+| [recipe-budget](skill/recipes/recipe-budget.md) | Budget vs actual with adherence indicators |
+| [recipe-accounts](skill/recipes/recipe-accounts.md) | Account overview and net worth |
+| [recipe-recurring](skill/recipes/recipe-recurring.md) | Recurring payments / subscription tracker |
+| [recipe-payees](skill/recipes/recipe-payees.md) | Payee / merchant spending analysis |
+| [recipe-income](skill/recipes/recipe-income.md) | Income report with sources and trends |
+| [recipe-category](skill/recipes/recipe-category.md) | Single-category deep dive over time |
+| [recipe-balance](skill/recipes/recipe-balance.md) | Account balance history with daily chart |
+| [recipe-health](skill/recipes/recipe-health.md) | Financial health scorecard (0-100 score) |
+| [recipe-annual](skill/recipes/recipe-annual.md) | Full-year summary with quarterly breakdown |
+| [recipe-uncategorized](skill/recipes/recipe-uncategorized.md) | Data quality / uncategorized transactions |
+| [recipe-upcoming](skill/recipes/recipe-upcoming.md) | Upcoming payment calendar with coverage |
+
+### Creating Your Own Recipes
+
+Recipes are plain Markdown files that tell AI agents how to generate a dashboard. Anyone can create and share recipes — no code required.
+
+**Recipe structure:**
+
+\`\`\`markdown
+---
+name: recipe-my-custom
+description: One-line description of what this dashboard shows
+---
+
+# Dashboard Title
+
+## Trigger
+Phrases that should activate this recipe (e.g., "show my savings goals")
+
+## Data Commands
+Exact \`arc\` CLI commands to run with \`--json\` flag.
+Include the expected return shape so the agent knows what to parse.
+
+## Layout
+Component-by-component description, top to bottom:
+1. Arc nav bar (mandatory)
+2. Hero total / stat cards / charts / tables
+3. Footer (mandatory)
+
+## Design
+Color choices, accent colors, special formatting rules.
+
+## Empty State
+What to show when no data is available.
+\`\`\`
+
+**Design system:** All recipes must use the arc dark editorial theme (near-black background, DM Serif Display + Outfit + JetBrains Mono fonts, arc nav bar with logo). See the [dashboard design skill](skill/SKILL.md) for the full CSS reference.
+
+**To contribute a recipe:**
+
+1. Fork this repo
+2. Add your \`recipe-*.md\` file to \`skill/recipes/\`
+3. Open a PR with a description of the dashboard and a screenshot
+
+**To use a custom recipe locally:** Drop your \`recipe-*.md\` file into the arc-dashboard-design skill directory on your machine:
+- Claude Code: \`~/.claude/skills/arc-dashboard-design/\`
+- Cursor: \`~/.cursor/skills/arc-dashboard-design/\`
+- Generic: \`~/.config/arc/recipes/\`
+
 ## Commands
 
 <!-- BEGIN:ARC_OPERATIONS_README -->

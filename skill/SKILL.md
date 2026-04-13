@@ -3,6 +3,18 @@ name: arc
 description: "Use Arc to work with Actual budgets across accounts, transactions, categories, payees, rules, schedules, budget months, and reports. Supports multi-budget switching, the TUI, and MCP tooling."
 ---
 
+<!--
+⚠️  GENERATED FILE — do not edit directly.
+
+This SKILL.md is produced by scripts/publish-public.sh in arc-cli-source.
+Any hand edits here will be overwritten on the next publish.
+
+Hand content lives in the heredoc template inside publish-public.sh.
+The operation catalog between BEGIN:ARC_OPERATIONS_SKILL and
+END:ARC_OPERATIONS_SKILL markers is generated from the registry at
+src/public-surface/operation-registry.ts.
+-->
+
 # Arc CLI
 
 Use `arc` for all Actual Budget work. The installed command is `arc`, not `arctual`.
@@ -75,8 +87,8 @@ Account-to-account transfers (e.g. checking → savings, card payment from check
 
 1. Always divide integer `amount` / `spent` / `balance` / `budgeted` fields by 100 and show them with **two decimal places**.
 2. **Never emit a currency symbol** (`₹`, `$`, `€`, `£`, etc.) unless the user has explicitly told you what currency they use in this conversation. Plain numbers like `89.89` or `−379.36` are correct.
-3. Never speculate about which minor unit the integer represents (cents, pence, or any other regional name). Just divide by 100 and present the decimal — the user knows their own currency.
-4. Always prefer `--json` output and read the integer fields directly. The CLI's human-readable output is currency-symbol-free by design, but even there you should trust the numeric value and never attach a symbol of your own.
+3. Never speculate about which minor unit it is (paise, cents, pence). Just say "89.89" — the user knows their own currency.
+4. The CLI's human-readable output may render an incorrect currency symbol — always trust the integer field from `--json` output, not the pretty print.
 
 ### Foreign-currency accounts (FX)
 
@@ -107,8 +119,13 @@ Use `native.amount` and `native.cleanNotes` when displaying transactions from a 
 
 - `arc budgets list` discovers every budget file on the configured Actual server.
 - `arc budgets switch --budget <id>` changes the installed default budget. The selection persists in the credential store across sessions.
-- Encrypted budgets need `--password '<pw>'` the first time you switch to them. Arc then caches the password per budget so subsequent switches are silent.
 - Most commands also accept `--budget <id>` to run against a non-default budget without switching.
+
+## Encrypted Budget Switching
+
+- Encrypted budgets require `--password '<pw>'` the first time you switch to them.
+- After a successful unlock Arc caches the password per budget in the credential store, so subsequent `arc budgets switch` calls are silent.
+- `arc budgets switch` is marked _advanced_ in the operation catalog because it mutates global credential-store state that persists across sessions.
 
 ## Installed Runtime
 
@@ -243,26 +260,6 @@ body::before {
   letter-spacing: -0.5px;
 }
 ```
-
-## Dashboard Recipes
-
-Pre-defined dashboard templates live in the `arc-dashboard-design` skill directory as separate `recipe-*.md` files. **Match user intent to a recipe, read ONLY that file, then generate the dashboard.** If ambiguous, default to `recipe-spending.md`.
-
-| User asks about | Read this file |
-|---|---|
-| spending, breakdown, where did money go | `recipe-spending.md` |
-| trends, month over month, income vs expense | `recipe-trends.md` |
-| budget, on budget, budget performance | `recipe-budget.md` |
-| accounts, net worth, balances | `recipe-accounts.md` |
-| recurring, subscriptions, fixed costs | `recipe-recurring.md` |
-| payees, merchants, who do I pay | `recipe-payees.md` |
-| income, earnings, salary | `recipe-income.md` |
-| category deep dive, spending on X | `recipe-category.md` |
-| balance history, account trend | `recipe-balance.md` |
-| financial health, scorecard | `recipe-health.md` |
-| yearly, annual, year in review | `recipe-annual.md` |
-| uncategorized, data quality, cleanup | `recipe-uncategorized.md` |
-| upcoming, bills due, payment calendar | `recipe-upcoming.md` |
 
 ## Operations Catalog
 
