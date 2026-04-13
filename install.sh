@@ -105,13 +105,105 @@ install_skill() {
   ok "$name → $dir"
 }
 
+# install_dashboard_skill AGENT_SKILLS_ROOT
+#   Drops the arc-dashboard-design skill alongside the arc skill so agents
+#   can produce high-quality financial dashboards without needing a separate
+#   frontend-design skill install.
+install_dashboard_skill() {
+  local root="$1"
+  local dash_dir="${root}/arc-dashboard-design"
+  mkdir -p "$dash_dir"
+  cat > "$dash_dir/SKILL.md" <<'DASHEOF'
+---
+name: arc-dashboard-design
+description: "Create distinctive, production-grade financial dashboard HTML pages for arc budget data. Use when the user asks to visualize spending, build a dashboard, or generate an HTML report from their financial data."
+---
+
+# Arc Dashboard Design
+
+This skill guides creation of beautiful financial dashboards for arc budget data.
+
+## When to use
+
+Activate this skill when the user asks to:
+- Build a dashboard, report, or HTML visualization of their budget data
+- Show spending, trends, or account data as a web page
+- Create any visual/graphical output from arc query results
+
+## Implementation
+
+Generate a **self-contained single HTML file** with inline CSS and JS. Use Chart.js from CDN for charts. Serve via `python3 -m http.server` and open in browser.
+
+## Branding
+
+Every dashboard MUST include the arc nav bar at the very top of `<body>`:
+
+```html
+<nav class="arc-nav">
+  <a href="https://arc.moi" target="_blank" rel="noopener">
+    <img src="https://arc.moi/colored%20logo.svg" alt="arc">
+    <span class="arc-wordmark">arc</span>
+  </a>
+</nav>
+```
+
+Sticky, blurred translucent background. Footer links to `https://arc.moi` with text "arc" (lowercase). Never mention "Actual Budget" — only "arc".
+
+## Design System
+
+**Theme — Dark editorial.** Background: near-black (#06080a to #0a0a0c). Surfaces: #0d1014 to #131316. Borders: #1a2030 to #1e1e24. Text: warm off-white (#e2e0dc to #e8e6e1). Dim: #637085 to #6b6a65.
+
+**Typography — Three layers:**
+- Display: serif (DM Serif Display, Fraunces). Large, letter-spacing -1 to -2px.
+- Body: sans-serif (Outfit, Manrope). Weights 300-700.
+- Data: monospace (JetBrains Mono, IBM Plex Mono). For amounts, axes, eyebrows.
+- Load from Google Fonts. Never use Arial, Inter, Roboto, or system fonts.
+
+**Colors:**
+- Warm: #e8c468 (gold), #e88c68 (amber), #ff6b6b (coral) — expenses
+- Cool: #4ecdc4 (teal), #68c4e8 (sky), #5f9df7 (blue) — income, positive
+- Supporting: #a468e8 (purple), #e868b4 (pink), #68e8a4 (green), #c4e868 (lime)
+- CSS variables for everything. 8-10 distinct category colors.
+
+**Layout:** Max 1100-1200px centered. 48px top padding. Stat cards: 3-4 col grid, colored top-edge. Section headings: mono uppercase 10-11px, letter-spacing 4px, with extending divider line. Chart panels: 16px border-radius, 28-32px padding.
+
+**Components:**
+- Hero total: enormous serif number, dimmed decimal, subtitle badge
+- Donut: 68% cutout, 3px bg-matching border, 4px segment border-radius, center label
+- Bar charts: 5-6px radius, current month in teal vs red
+- Line/area: 2px stroke, 3px points, 0.05 alpha fill, 0.35 tension
+- Category cards: 3px colored left border, name + pct header, mono amount, 4px animated progress bar
+- Data tables: no outer border, row borders, hover highlight, inline bars
+- Heatmaps: 5-level intensity, rounded cells, hover scale
+
+**Animation:** Staggered fadeUp (0.5-0.6s, 0.06s cascade). Bar width 0→target over 0.8-1s cubic-bezier(0.22,1,0.36,1). Counter: 1.2s easeOutCubic. Charts: 1000-1200ms easeOutQuart. Hover: translateY(-2px).
+
+**Grain overlay:**
+```css
+body::before {
+  content: ''; position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,...feTurbulence...");
+  pointer-events: none; z-index: 9999;
+}
+```
+
+**Responsive:** 900px → single column. 560px → stacked cards, smaller fonts.
+
+**Numbers:** .toLocaleString() with 2 decimals. Axes: Xk for thousands. Net: +/− prefix.
+DASHEOF
+  ok "arc-dashboard-design skill installed"
+}
+
 # install_agent_skills
 #   Drops the Arc skill into every detected agent's conventional location,
 #   plus the generic fallback at ~/.config/arc/SKILL.md. Mirrors the moivault
 #   target matrix so the two installers stay in lockstep.
 install_agent_skills() {
   # Claude Code / Claude Desktop
-  [ -d "$HOME/.claude" ] && install_skill "$HOME/.claude/skills/arc" "claude-code"
+  if [ -d "$HOME/.claude" ]; then
+    install_skill "$HOME/.claude/skills/arc" "claude-code"
+    install_dashboard_skill "$HOME/.claude/skills"
+  fi
 
   # Codex (OpenAI) — plus AGENTS.md note
   if [ -d "$HOME/.codex" ] || command -v codex >/dev/null 2>&1; then
@@ -177,6 +269,24 @@ EOF
   mkdir -p "$HOME/.config/arc"
   cp "$SKILL_FILE" "$HOME/.config/arc/SKILL.md"
   ok "fallback → ~/.config/arc/SKILL.md"
+
+  # Install dashboard design skill alongside arc for all detected agents
+  for agent_dir in \
+    "$HOME/.cursor/skills" \
+    "$HOME/.windsurf/skills" \
+    "$HOME/.agents/skills" \
+    "$CONFIG_HOME/amp/agents/skills" \
+    "$HOME/.gemini/antigravity/skills" \
+    "$HOME/.github-copilot/skills" \
+    "$CONFIG_HOME/goose/skills" \
+    "$CONFIG_HOME/opencode/skills" \
+    "$HOME/.trae/skills" \
+    "$HOME/.kilo/skills" \
+    "$HOME/.augment/skills" \
+    "$HOME/.aider/skills" \
+    "$HOME/.codex/skills"; do
+    [ -d "${agent_dir}/arc" ] && install_dashboard_skill "$agent_dir"
+  done
 
   # Summary line retained verbatim so tests that grep it keep working.
   if [ -n "$SKILL_INSTALLED" ]; then
