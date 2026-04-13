@@ -15,6 +15,22 @@ Arc exposes the same operations three ways:
 
 Prefer the MCP tools when driving Arc from an agent — inputs are schema-validated and errors are structured.
 
+## Destructive Action Safety
+
+**MANDATORY: Always confirm with the user before executing any destructive or irreversible action.** Never proceed silently. This includes but is not limited to:
+
+- **Deleting** anything: accounts, transactions, categories, payees, rules, schedules
+- **Closing** accounts
+- **Batch operations**: batch-update, batch-categorize, batch-add (these touch many records at once)
+- **Merging** payees (irreversible)
+- **Transferring and deleting** categories (moves all transactions, then removes the category)
+- **Completing** schedules (stops future occurrences permanently)
+- **Switching budgets** (mutates global credential-store state)
+
+Before running any of these, clearly state what will happen (e.g. "This will delete 3 transactions" or "This will merge payees AMZN and Amazon.com into Amazon") and ask the user to confirm. A simple "Should I proceed?" is sufficient. Do NOT skip this step even if the user's original message implies intent — always get explicit confirmation for the specific action.
+
+Read-only operations (`arc query …`, `arc accounts list`, `arc transactions list`, etc.) do not require confirmation.
+
 ## Answering Common Questions (read this first)
 
 Most real user questions are answered by **transaction-based queries**, not by the **budgets** commands. The `budgets *` commands describe the user's planned budget (envelopes, carryover, set amounts) and are only meaningful when the user has actively budgeted amounts for the period. If the user asks "how much did I spend", "what was my total", "give me a breakdown", assume the answer lives in `query` or `transactions`, not `budgets`.
