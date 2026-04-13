@@ -244,6 +244,26 @@ body::before {
 }
 ```
 
+## Dashboard Recipes
+
+Pre-defined dashboard templates live in the `arc-dashboard-design` skill directory as separate `recipe-*.md` files. **Match user intent to a recipe, read ONLY that file, then generate the dashboard.** If ambiguous, default to `recipe-spending.md`.
+
+| User asks about | Read this file |
+|---|---|
+| spending, breakdown, where did money go | `recipe-spending.md` |
+| trends, month over month, income vs expense | `recipe-trends.md` |
+| budget, on budget, budget performance | `recipe-budget.md` |
+| accounts, net worth, balances | `recipe-accounts.md` |
+| recurring, subscriptions, fixed costs | `recipe-recurring.md` |
+| payees, merchants, who do I pay | `recipe-payees.md` |
+| income, earnings, salary | `recipe-income.md` |
+| category deep dive, spending on X | `recipe-category.md` |
+| balance history, account trend | `recipe-balance.md` |
+| financial health, scorecard | `recipe-health.md` |
+| yearly, annual, year in review | `recipe-annual.md` |
+| uncategorized, data quality, cleanup | `recipe-uncategorized.md` |
+| upcoming, bills due, payment calendar | `recipe-upcoming.md` |
+
 ## Operations Catalog
 
 <!-- BEGIN:ARC_OPERATIONS_SKILL -->

@@ -683,6 +683,15 @@ document.getElementById('ts').textContent = 'Generated ' +
   new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
 ```
 DASHEOF
+
+  # Copy dashboard recipe files from app snapshot if available
+  local recipes_src="${APP_DIR}/skill/recipes"
+  if [ -d "$recipes_src" ]; then
+    for recipe in "$recipes_src"/recipe-*.md; do
+      [ -f "$recipe" ] && cp "$recipe" "$dash_dir/"
+    done
+  fi
+
   ok "arc-dashboard-design skill installed"
 }
 
