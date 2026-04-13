@@ -67,6 +67,10 @@ Arc only talks to **Actual Budget**. There is no other backend, database, or sto
 
 Actual stores every amount as an **integer in minor units** (`amount = majorUnits * 100`). Examples: `8989` means `89.89`, `-37936` means `-379.36`, `220000` means `2200.00`. This is true regardless of the user's currency — Actual itself is currency-agnostic.
 
+### Transfers are not expenses
+
+Account-to-account transfers (e.g. checking → savings, card payment from checking) are **not expenses**. When reporting spending, totals, or category breakdowns, exclude transfer transactions entirely. Transfers move money between the user's own accounts — they do not represent money leaving the budget. Only count transactions with a real category assignment as expenses. If a query result includes transfer payees (e.g. payee names matching account names, or transactions with no category), filter them out of spending calculations.
+
 **Rules when presenting numbers to the user:**
 
 1. Always divide integer `amount` / `spent` / `balance` / `budgeted` fields by 100 and show them with **two decimal places**.
