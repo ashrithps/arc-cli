@@ -177,6 +177,23 @@ export function printCategories(groups: any[]) {
 
 // ── Payees ────────────────────────────────────────────────────
 
+// ── Tags ──────────────────────────────────────────────────────
+
+export function printTags(tags: any[]) {
+  console.log(header(`Tags (${tags.length})`));
+  if (tags.length === 0) {
+    console.log(`  ${colors.dim('(no tags yet — try: arc tags add <name>)')}\n`);
+    return;
+  }
+  for (const t of tags) {
+    const dot = t.color ? chalk.hex(t.color)(sym.bullet) : colors.muted(sym.bullet);
+    const desc = t.description ? colors.dim(`  ${t.description}`) : '';
+    const colorTxt = t.color ? colors.dim(`  ${t.color}`) : '';
+    console.log(`  ${dot} ${chalk.white(t.tag)}${colorTxt}${desc} ${colors.dim(t.id.slice(0, 8))}`);
+  }
+  console.log('');
+}
+
 export function printPayees(payees: any[], showTransfers: boolean = false) {
   const filtered = showTransfers ? payees : payees.filter((p: any) => !p.transfer_acct);
   console.log(header(`Payees (${filtered.length})`));
@@ -286,6 +303,7 @@ export function printHelp() {
   console.log(cmd('transactions', 'List/add/update/delete transactions'));
   console.log(cmd('categories', 'List/manage categories'));
   console.log(cmd('payees', 'List/manage payees'));
+  console.log(cmd('tags', 'List/add/update/delete tags'));
   console.log(cmd('rules', 'List/manage rules'));
   console.log(cmd('schedules', 'List/manage schedules'));
   console.log(cmd('budgets', 'List/switch budgets and manage budget amounts'));

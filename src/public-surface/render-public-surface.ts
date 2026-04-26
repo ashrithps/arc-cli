@@ -33,6 +33,7 @@ const GROUP_ORDER: readonly PublicOperationGroup[] = [
   "transactions",
   "categories",
   "payees",
+  "tags",
   "rules",
   "schedules",
   "budgets",
@@ -44,6 +45,7 @@ const GROUP_TITLES: Record<PublicOperationGroup, string> = {
   transactions: "Transactions",
   categories: "Categories",
   payees: "Payees",
+  tags: "Tags",
   rules: "Rules",
   schedules: "Schedules",
   budgets: "Budgets",
@@ -56,6 +58,8 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
     "Create, update, split, transfer, and batch-process transactions.",
   categories: "Manage category groups and individual categories.",
   payees: "Manage payees, merge duplicates, and look up usage.",
+  tags:
+    "Manage Actual Budget tags (color, description) and apply / unapply them on transactions. Tag membership lives in transaction notes as `#tag`.",
   rules: "Define and maintain auto-categorization and payee-cleanup rules.",
   schedules: "Manage recurring schedules and post them as transactions.",
   budgets:

@@ -146,7 +146,7 @@ Manage on- and off-budget accounts and balances.
 
 Create, update, split, transfer, and batch-process transactions.
 
-- **`arc transactions list`** — List transactions for an account, optionally filtered by date range.
+- **`arc transactions list`** — List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set).
 
   ```bash
   arc transactions list --account 'HDFC Checking'
@@ -164,7 +164,7 @@ Create, update, split, transfer, and batch-process transactions.
   arc transactions import --account 'Card' '[{"date":"2026-04-01","amount":-1234,"payee_name":"Amazon"}]'
   ```
 
-- **`arc transactions update`** — Update fields on an existing transaction by id.
+- **`arc transactions update`** — Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose.
 
   ```bash
   arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'
@@ -278,6 +278,46 @@ Manage payees, merge duplicates, and look up usage.
 
   ```bash
   arc payees merge --target 'Amazon' --merge 'AMZN,Amazon.com,Amzn Mktp'
+  ```
+
+## Tags
+
+Manage Actual Budget tags (color, description) and apply / unapply them on transactions. Tag membership lives in transaction notes as `#tag`.
+
+- **`arc tags list`** — List all tags with their colors and optional descriptions.
+
+  ```bash
+  arc tags list
+  ```
+
+- **`arc tags add`** — Create a new tag. The leading `#` is optional and stripped if present.
+
+  ```bash
+  arc tags add --name Quantini
+  ```
+
+- **`arc tags update`** — Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID.
+
+  ```bash
+  arc tags update --id Quantini --color '#FF6B6B'
+  ```
+
+- **`arc tags apply`** — Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent.
+
+  ```bash
+  arc tags apply --transaction <tx-id> --tag Quantini
+  ```
+
+- **`arc tags unapply`** — Remove one or more `#tag` tokens from a transaction's notes.
+
+  ```bash
+  arc tags unapply --transaction <tx-id> --tag Quantini
+  ```
+
+- **`arc tags delete`** — Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately. _(advanced)_
+
+  ```bash
+  arc tags delete --id Quantini
   ```
 
 ## Rules

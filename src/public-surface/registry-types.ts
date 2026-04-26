@@ -19,6 +19,7 @@ export type PublicOperationGroup =
   | "transactions"
   | "categories"
   | "payees"
+  | "tags"
   | "rules"
   | "schedules"
   | "budgets"

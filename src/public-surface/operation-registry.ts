@@ -158,15 +158,18 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_transactions_list",
     mode: "read",
-    description: "List transactions for an account, optionally filtered by date range.",
+    description: "List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set).",
     examples: [
       "arc transactions list --account 'HDFC Checking'",
       "arc transactions list --account 'Card' --start 2026-01-01 --end 2026-03-31",
+      "arc transactions list --tag Quantini",
+      "arc transactions list --tag 'Quantini,Shrine Global' --start 2026-04-01",
     ],
     inputSchema: {
-      account: accountRef,
+      account: accountRef.optional(),
       start: dateStr.optional(),
       end: dateStr.optional(),
+      tag: z.string().optional().describe("Comma-separated tag name(s). Multi-tag = AND match. Searches across all accounts unless --account is also set."),
       json: jsonFlag,
     },
     defaultExposure: "default",
@@ -180,6 +183,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     description: "Add a single transaction to an account. Generates a deterministic imported_id when omitted.",
     examples: [
       "arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 'Coffee Shop' --category 'Dining'",
+      "arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 'Quantini Lunch' --tag 'Quantini'",
     ],
     inputSchema: {
       account: accountRef,
@@ -188,6 +192,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
       payee: payeeRef.optional(),
       category: categoryRef.optional(),
       notes: z.string().optional(),
+      tag: z.string().optional().describe("Comma-separated tag name(s) to apply. New tags are created with auto-color."),
       cleared: z.boolean().optional(),
       imported_id: z.string().optional().describe("Override the generated dedupe id."),
     },
@@ -215,8 +220,12 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_transactions_update",
     mode: "write",
-    description: "Update fields on an existing transaction by id.",
-    examples: ["arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'"],
+    description: "Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose.",
+    examples: [
+      "arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'",
+      "arc transactions update --id <txn-id> --add-tag Quantini",
+      "arc transactions update --id <txn-id> --remove-tag 'OldTag,Stale'",
+    ],
     inputSchema: {
       id: z.string().describe("Transaction id (UUID)."),
       amount: amountNumber.optional(),
@@ -225,6 +234,8 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
       cleared: z.boolean().optional(),
       category: categoryRef.optional(),
       payee: payeeRef.optional(),
+      "add-tag": z.string().optional().describe("Comma-separated tags to append to the transaction's notes."),
+      "remove-tag": z.string().optional().describe("Comma-separated tags to strip from the transaction's notes."),
     },
     defaultExposure: "default",
   },
@@ -476,6 +487,104 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     inputSchema: {
       limit: z.number().int().positive().optional(),
       json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+
+  // ── tags ──────────────────────────────────────────────────────────────────
+  //
+  // Tags in Actual Budget are first-class entities (id/name/color/description)
+  // synced via the standard CRDT pipeline. Tag *membership* on a transaction
+  // lives in the `notes` field as `#tagname` (or `#"With Spaces"`) — Actual's
+  // native parsing convention. The CLI surfaces both: tag CRUD against the
+  // tags table, and tag-aware filtering / mutation on transaction notes.
+  {
+    id: "tags.list",
+    group: "tags",
+    subcommand: "list",
+    mcpTool: "arc_tags_list",
+    mode: "read",
+    description: "List all tags with their colors and optional descriptions.",
+    examples: ["arc tags list", "arc tags list --json"],
+    inputSchema: { json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
+    id: "tags.add",
+    group: "tags",
+    subcommand: "add",
+    mcpTool: "arc_tags_add",
+    mode: "write",
+    description: "Create a new tag. The leading `#` is optional and stripped if present.",
+    examples: [
+      "arc tags add --name Quantini",
+      "arc tags add --name 'Shrine Global' --color '#A855F7' --description 'Company expenses'",
+    ],
+    inputSchema: {
+      name: z.string(),
+      color: z.string().optional().describe("Hex color, e.g. #A855F7."),
+      description: z.string().optional(),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "tags.update",
+    group: "tags",
+    subcommand: "update",
+    mcpTool: "arc_tags_update",
+    mode: "write",
+    description: "Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID.",
+    examples: [
+      "arc tags update --id Quantini --color '#FF6B6B'",
+      "arc tags update --id Quantini --name QuantiniLabs",
+    ],
+    inputSchema: {
+      id: z.string().describe("Tag name or UUID."),
+      name: z.string().optional(),
+      color: z.string().optional(),
+      description: z.string().optional(),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "tags.delete",
+    group: "tags",
+    subcommand: "delete",
+    mcpTool: "arc_tags_delete",
+    mode: "write",
+    description: "Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately.",
+    examples: ["arc tags delete --id Quantini"],
+    inputSchema: { id: z.string().describe("Tag name or UUID.") },
+    defaultExposure: "advanced",
+  },
+  {
+    id: "tags.apply",
+    group: "tags",
+    subcommand: "apply",
+    mcpTool: "arc_tags_apply",
+    mode: "write",
+    description: "Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent.",
+    examples: [
+      "arc tags apply --transaction <tx-id> --tag Quantini",
+      "arc tags apply --transaction <tx-id> --tag 'Quantini,Shrine Global'",
+    ],
+    inputSchema: {
+      transaction: z.string().describe("Transaction UUID."),
+      tag: z.string().describe("Tag name(s), comma-separated."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "tags.unapply",
+    group: "tags",
+    subcommand: "unapply",
+    mcpTool: "arc_tags_unapply",
+    mode: "write",
+    description: "Remove one or more `#tag` tokens from a transaction's notes.",
+    examples: ["arc tags unapply --transaction <tx-id> --tag Quantini"],
+    inputSchema: {
+      transaction: z.string(),
+      tag: z.string().describe("Tag name(s), comma-separated."),
     },
     defaultExposure: "default",
   },

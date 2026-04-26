@@ -354,11 +354,13 @@ Create, update, split, transfer, and batch-process transactions.
 
 - mode: **read**
 - mcp tool: `arc_transactions_list`
-- List transactions for an account, optionally filtered by date range.
+- List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set).
 
 ```bash
 arc transactions list --account 'HDFC Checking'
 arc transactions list --account 'Card' --start 2026-01-01 --end 2026-03-31
+arc transactions list --tag Quantini
+arc transactions list --tag 'Quantini,Shrine Global' --start 2026-04-01
 ```
 
 ### `arc transactions add`
@@ -369,6 +371,7 @@ arc transactions list --account 'Card' --start 2026-01-01 --end 2026-03-31
 
 ```bash
 arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 'Coffee Shop' --category 'Dining'
+arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 'Quantini Lunch' --tag 'Quantini'
 ```
 
 ### `arc transactions import`
@@ -385,10 +388,12 @@ arc transactions import --account 'Card' '[{"date":"2026-04-01","amount":-1234,"
 
 - mode: **write**
 - mcp tool: `arc_transactions_update`
-- Update fields on an existing transaction by id.
+- Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose.
 
 ```bash
 arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'
+arc transactions update --id <txn-id> --add-tag Quantini
+arc transactions update --id <txn-id> --remove-tag 'OldTag,Stale'
 ```
 
 ### `arc transactions delete`
@@ -569,6 +574,74 @@ arc payees delete --id 'Old Vendor'
 
 ```bash
 arc payees merge --target 'Amazon' --merge 'AMZN,Amazon.com,Amzn Mktp'
+```
+
+## Tags
+
+Manage Actual Budget tags (color, description) and apply / unapply them on transactions. Tag membership lives in transaction notes as `#tag`.
+
+### `arc tags list`
+
+- mode: **read**
+- mcp tool: `arc_tags_list`
+- List all tags with their colors and optional descriptions.
+
+```bash
+arc tags list
+arc tags list --json
+```
+
+### `arc tags add`
+
+- mode: **write**
+- mcp tool: `arc_tags_add`
+- Create a new tag. The leading `#` is optional and stripped if present.
+
+```bash
+arc tags add --name Quantini
+arc tags add --name 'Shrine Global' --color '#A855F7' --description 'Company expenses'
+```
+
+### `arc tags update`
+
+- mode: **write**
+- mcp tool: `arc_tags_update`
+- Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID.
+
+```bash
+arc tags update --id Quantini --color '#FF6B6B'
+arc tags update --id Quantini --name QuantiniLabs
+```
+
+### `arc tags apply`
+
+- mode: **write**
+- mcp tool: `arc_tags_apply`
+- Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent.
+
+```bash
+arc tags apply --transaction <tx-id> --tag Quantini
+arc tags apply --transaction <tx-id> --tag 'Quantini,Shrine Global'
+```
+
+### `arc tags unapply`
+
+- mode: **write**
+- mcp tool: `arc_tags_unapply`
+- Remove one or more `#tag` tokens from a transaction's notes.
+
+```bash
+arc tags unapply --transaction <tx-id> --tag Quantini
+```
+
+### `arc tags delete`
+
+- mode: **write** (advanced)
+- mcp tool: `arc_tags_delete`
+- Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately.
+
+```bash
+arc tags delete --id Quantini
 ```
 
 ## Rules

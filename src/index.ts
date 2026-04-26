@@ -15,6 +15,7 @@ import * as rules from './operations/rules.js';
 import * as schedules from './operations/schedules.js';
 import * as budgets from './operations/budgets.js';
 import * as queries from './operations/queries.js';
+import * as tags from './operations/tags.js';
 import { amountToCents, formatCurrency, printTable, printJson } from './utils/format.js';
 import { makeImportedId } from './utils/imported-id.js';
 import { parseInstallPayload } from './payload.js';
@@ -185,10 +186,25 @@ async function handleAccounts(client: ActualClient, writer: SafeWriter, sub: str
 async function handleTransactions(client: ActualClient, writer: SafeWriter, sub: string, flags: Record<string, string>, positional: string[]) {
   switch (sub) {
     case 'list': {
-      const accountName = requireFlag(flags, 'account');
-      const accountId = await accounts.resolveAccountId(client, accountName);
       const start = getFlag(flags, 'start');
       const end = getFlag(flags, 'end');
+      const tagFilter = getFlag(flags, 'tag');
+      // `--tag=A,B` filters across ALL accounts (multi-tag = AND match).
+      // When `--tag` is set, `--account` is optional; otherwise required.
+      if (tagFilter) {
+        const tagNames = tagFilter.split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean);
+        let txns = await tags.listTransactionsByTags(client, tagNames, start, end);
+        const accountFlag = getFlag(flags, 'account');
+        if (accountFlag) {
+          const accountId = await accounts.resolveAccountId(client, accountFlag);
+          txns = txns.filter((t: any) => t.account === accountId);
+        }
+        if (isJson(flags)) return printJson(txns);
+        ui.printTransactions(txns, `tag:${tagNames.join(',')}`);
+        break;
+      }
+      const accountName = requireFlag(flags, 'account');
+      const accountId = await accounts.resolveAccountId(client, accountName);
       const txns = await transactions.listTransactions(client, accountId, start, end);
       if (isJson(flags)) return printJson(txns);
       const acctObj = await accounts.findAccountByName(client, accountName);
@@ -208,6 +224,15 @@ async function handleTransactions(client: ActualClient, writer: SafeWriter, sub:
         else console.warn(`Warning: category "${flags.category}" not found, skipping.`);
       }
       if (flags.notes) tx.notes = flags.notes;
+      // `--tag=A,B` appends `#A #B` to notes (Actual native format) and
+      // ensures both tags exist in the synced `tags` table so colors roam.
+      if (flags.tag) {
+        const tagNames = flags.tag.split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean);
+        await tags.ensureTagsExist(client, writer, tagNames);
+        let notes = tx.notes ?? '';
+        for (const name of tagNames) notes = tags.addTagToken(notes, name);
+        tx.notes = notes;
+      }
       tx.cleared = getClearedFlag(flags);
       tx.imported_id = flags['imported-id'] || makeImportedId([
         accountId,
@@ -252,6 +277,16 @@ async function handleTransactions(client: ActualClient, writer: SafeWriter, sub:
         }
       }
       await transactions.updateTransaction(client, writer, id, fields);
+      // Tag mutations are notes rewrites layered on top of the update above.
+      // Done after the main update so the latest notes value is what we read.
+      if (flags['add-tag']) {
+        const adds = flags['add-tag'].split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean);
+        await tags.addTagsToTransaction(client, writer, id, adds);
+      }
+      if (flags['remove-tag']) {
+        const removes = flags['remove-tag'].split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean);
+        await tags.removeTagsFromTransaction(client, writer, id, removes);
+      }
       console.log('Transaction updated.');
       break;
     }
@@ -560,6 +595,57 @@ async function handlePayees(client: ActualClient, writer: SafeWriter, sub: strin
     }
     default:
       throw new Error(`Unknown payees subcommand: ${sub}. Use: list, create, update, delete, merge, find-or-create, common`);
+  }
+}
+
+async function handleTags(client: ActualClient, writer: SafeWriter, sub: string, flags: Record<string, string>) {
+  switch (sub) {
+    case 'list': {
+      const list = await tags.listTags(client);
+      if (isJson(flags)) return printJson(list);
+      ui.printTags(list);
+      break;
+    }
+    case 'add': {
+      const name = requireFlag(flags, 'name').replace(/^#/, '');
+      const color = getFlag(flags, 'color');
+      const description = getFlag(flags, 'description');
+      const tag = await tags.createTag(client, writer, { tag: name, color, description });
+      console.log(`Created tag: ${tag.tag} (${tag.id})`);
+      break;
+    }
+    case 'update': {
+      const id = await tags.resolveTagId(client, requireFlag(flags, 'id'));
+      const fields: any = {};
+      if (flags.name) fields.tag = flags.name.replace(/^#/, '');
+      if (flags.color !== undefined) fields.color = flags.color;
+      if (flags.description !== undefined) fields.description = flags.description;
+      await tags.updateTag(client, writer, id, fields);
+      console.log('Tag updated.');
+      break;
+    }
+    case 'delete': {
+      const id = await tags.resolveTagId(client, requireFlag(flags, 'id'));
+      await tags.deleteTag(client, writer, id);
+      console.log('Tag deleted.');
+      break;
+    }
+    case 'apply': {
+      const txId = requireFlag(flags, 'transaction');
+      const tagNames = requireFlag(flags, 'tag').split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean);
+      await tags.addTagsToTransaction(client, writer, txId, tagNames);
+      console.log(`Applied ${tagNames.length} tag(s) to ${txId}.`);
+      break;
+    }
+    case 'unapply': {
+      const txId = requireFlag(flags, 'transaction');
+      const tagNames = requireFlag(flags, 'tag').split(',').map(s => s.trim().replace(/^#/, '')).filter(Boolean);
+      await tags.removeTagsFromTransaction(client, writer, txId, tagNames);
+      console.log(`Removed ${tagNames.length} tag(s) from ${txId}.`);
+      break;
+    }
+    default:
+      throw new Error(`Unknown tags subcommand: ${sub}. Use: list, add, update, delete, apply, unapply`);
   }
 }
 
@@ -1041,6 +1127,7 @@ export async function executeParsedCommand(
     case 'transactions': await handleTransactions(client, writer, subcommand, flags, positional); break;
     case 'categories': await handleCategories(client, writer, subcommand, flags); break;
     case 'payees': await handlePayees(client, writer, subcommand, flags); break;
+    case 'tags': await handleTags(client, writer, subcommand, flags); break;
     case 'rules': await handleRules(client, writer, subcommand, flags, positional); break;
     case 'schedules': await handleSchedules(client, writer, subcommand, flags, positional); break;
     case 'budgets': await handleBudgets(client, writer, subcommand, flags); break;
