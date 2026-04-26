@@ -50,6 +50,7 @@ import * as ruleOps from '../operations/rules.js';
 import * as scheduleOps from '../operations/schedules.js';
 import * as budgetOps from '../operations/budgets.js';
 import * as queryOps from '../operations/queries.js';
+import * as tagOps from '../operations/tags.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,11 +142,23 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   },
 
   // transactions ─────────────────────────────────────────────────────────────
-  arc_transactions_list: async ({ client }, { account, start, end }) => {
+  arc_transactions_list: async ({ client }, { account, start, end, tag }) => {
+    // `tag` filter searches across ALL accounts; `account` becomes optional
+    // and narrows the result set when also supplied.
+    if (tag) {
+      const tagNames = String(tag).split(',').map((s: string) => s.trim().replace(/^#/, '')).filter(Boolean);
+      let txns = await tagOps.listTransactionsByTags(client, tagNames, start, end);
+      if (account) {
+        const accountId = await accountOps.resolveAccountId(client, account);
+        txns = txns.filter((t: any) => t.account === accountId);
+      }
+      return txns;
+    }
+    if (!account) throw new Error('--account is required when --tag is not provided.');
     const id = await accountOps.resolveAccountId(client, account);
     return transactionOps.listTransactions(client, id, start, end);
   },
-  arc_transactions_add: async (deps, { account, date, amount, payee, category, notes, cleared, imported_id }) => {
+  arc_transactions_add: async (deps, { account, date, amount, payee, category, notes, cleared, imported_id, tag }) => {
     const { client, writer } = deps;
     const accountId = await accountOps.resolveAccountId(client, account);
     const amountCents = amountToCents(amount);
@@ -153,6 +166,13 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     if (payee) tx.payee_name = payee;
     if (category) tx.category = await resolveCategoryIdFromName(client, category);
     if (notes) tx.notes = notes;
+    if (tag) {
+      const tagNames = String(tag).split(',').map((s: string) => s.trim().replace(/^#/, '')).filter(Boolean);
+      await tagOps.ensureTagsExist(client, writer, tagNames);
+      let composed = (tx.notes as string) ?? '';
+      for (const name of tagNames) composed = tagOps.addTagToken(composed, name);
+      tx.notes = composed;
+    }
     tx.cleared = cleared ?? true;
     tx.imported_id = imported_id || makeImportedId([
       accountId,
@@ -170,8 +190,11 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     const result = await transactionOps.importTransactions(client, writer, accountId, txs);
     return result;
   },
-  arc_transactions_update: async (deps, { id, amount, date, notes, cleared, category, payee }) => {
+  arc_transactions_update: async (deps, args) => {
     const { client, writer } = deps;
+    const { id, amount, date, notes, cleared, category, payee } = args;
+    const addTag = (args as any)['add-tag'];
+    const removeTag = (args as any)['remove-tag'];
     const fields: Record<string, unknown> = {};
     if (amount != null) fields.amount = amountToCents(amount);
     if (date != null) fields.date = date;
@@ -180,6 +203,14 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     if (category != null) fields.category = await resolveCategoryIdFromName(client, category);
     if (payee != null) fields.payee = await resolveOrCreatePayeeId(deps, payee);
     await transactionOps.updateTransaction(client, writer, id, fields as any);
+    if (addTag) {
+      const adds = String(addTag).split(',').map((s: string) => s.trim().replace(/^#/, '')).filter(Boolean);
+      await tagOps.addTagsToTransaction(client, writer, id, adds);
+    }
+    if (removeTag) {
+      const removes = String(removeTag).split(',').map((s: string) => s.trim().replace(/^#/, '')).filter(Boolean);
+      await tagOps.removeTagsFromTransaction(client, writer, id, removes);
+    }
     return { id };
   },
   arc_transactions_delete: async ({ client, writer }, { id }) => {
@@ -358,6 +389,41 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   },
   arc_payees_common: async ({ client }, { limit }) => {
     return payeeOps.getCommonPayees(client, limit);
+  },
+
+  // tags ─────────────────────────────────────────────────────────────────────
+  arc_tags_list: async ({ client }) => tagOps.listTags(client),
+  arc_tags_add: async ({ client, writer }, { name, color, description }) => {
+    const tag = await tagOps.createTag(client, writer, {
+      tag: String(name).replace(/^#/, ''),
+      color,
+      description,
+    });
+    return tag;
+  },
+  arc_tags_update: async ({ client, writer }, { id, name, color, description }) => {
+    const tagId = await tagOps.resolveTagId(client, id);
+    const fields: Record<string, unknown> = {};
+    if (name != null) fields.tag = String(name).replace(/^#/, '');
+    if (color !== undefined) fields.color = color;
+    if (description !== undefined) fields.description = description;
+    await tagOps.updateTag(client, writer, tagId, fields as any);
+    return { id: tagId };
+  },
+  arc_tags_delete: async ({ client, writer }, { id }) => {
+    const tagId = await tagOps.resolveTagId(client, id);
+    await tagOps.deleteTag(client, writer, tagId);
+    return { id: tagId };
+  },
+  arc_tags_apply: async ({ client, writer }, { transaction, tag }) => {
+    const tagNames = String(tag).split(',').map((s: string) => s.trim().replace(/^#/, '')).filter(Boolean);
+    await tagOps.addTagsToTransaction(client, writer, String(transaction), tagNames);
+    return { transaction, applied: tagNames };
+  },
+  arc_tags_unapply: async ({ client, writer }, { transaction, tag }) => {
+    const tagNames = String(tag).split(',').map((s: string) => s.trim().replace(/^#/, '')).filter(Boolean);
+    await tagOps.removeTagsFromTransaction(client, writer, String(transaction), tagNames);
+    return { transaction, removed: tagNames };
   },
 
   // rules ────────────────────────────────────────────────────────────────────
