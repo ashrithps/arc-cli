@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getArcConfigPath } from './runtime-paths.js';
 import type { RuntimeConfig } from './types.js';
+import { assertArcHost } from './utils/arc-host.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -107,6 +108,8 @@ function resolveRuntimeConfig(
 
   if (!apiUrl) throw new Error('Missing runtime config value: apiUrl');
   if (!apiKey) throw new Error('Missing runtime config value: apiKey');
+
+  assertArcHost(apiUrl, env.ACTUAL_SERVER_URL ? 'ACTUAL_SERVER_URL' : 'apiUrl');
 
   return {
     apiUrl,

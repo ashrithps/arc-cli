@@ -1,4 +1,5 @@
 import type { InstallPayload } from './types.js';
+import { assertArcHost } from './utils/arc-host.js';
 
 function readString(value: unknown, field: keyof InstallPayload, required = false): string | undefined {
   if (value == null) {
@@ -22,8 +23,11 @@ export function parseInstallPayload(raw: string | InstallPayload): InstallPayloa
     throw new Error('Invalid payload: root value must be an object');
   }
 
+  const apiUrl = readString(parsed.apiUrl, 'apiUrl', true)!;
+  assertArcHost(apiUrl, 'payload.apiUrl');
+
   return {
-    apiUrl: readString(parsed.apiUrl, 'apiUrl', true)!,
+    apiUrl,
     apiKey: readString(parsed.apiKey, 'apiKey', true)!,
     syncId: readString(parsed.syncId, 'syncId', true)!,
     displayUrl: readString(parsed.displayUrl, 'displayUrl'),
