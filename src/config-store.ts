@@ -109,12 +109,15 @@ function resolveRuntimeConfig(
   if (!apiUrl) throw new Error('Missing runtime config value: apiUrl');
   if (!apiKey) throw new Error('Missing runtime config value: apiKey');
 
-  assertArcHost(apiUrl, env.ACTUAL_SERVER_URL ? 'ACTUAL_SERVER_URL' : 'apiUrl');
+  const displayUrl = env.ACTUAL_DISPLAY_URL ?? saved?.displayUrl;
+  if (displayUrl) {
+    assertArcHost(displayUrl, env.ACTUAL_DISPLAY_URL ? 'ACTUAL_DISPLAY_URL' : 'displayUrl');
+  }
 
   return {
     apiUrl,
     apiKey,
-    displayUrl: env.ACTUAL_DISPLAY_URL ?? saved?.displayUrl,
+    displayUrl,
     defaultSyncId: env.ACTUAL_BUDGET_SYNC_ID ?? saved?.defaultSyncId,
     defaultBudgetName: env.ACTUAL_BUDGET_NAME ?? saved?.defaultBudgetName,
     encryptionPassword: env.ACTUAL_ENCRYPTION_PASSWORD ?? saved?.encryptionPassword,

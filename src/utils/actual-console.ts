@@ -1,4 +1,7 @@
 const NOISY_PREFIXES = [
+  '[Breadcrumb]',
+  '[Client] Connected to budget:',
+  '[Client] Disconnected',
   'Loaded spreadsheet from cache',
   'Loading fresh spreadsheet',
   'Syncing since ',
