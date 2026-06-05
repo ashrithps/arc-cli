@@ -23,7 +23,8 @@ export type PublicOperationGroup =
   | "rules"
   | "schedules"
   | "budgets"
-  | "query";
+  | "query"
+  | "portfolio";
 
 export type PublicOperationMode = "read" | "write";
 

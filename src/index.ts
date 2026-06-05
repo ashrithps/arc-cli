@@ -16,6 +16,7 @@ import * as schedules from './operations/schedules.js';
 import * as budgets from './operations/budgets.js';
 import * as queries from './operations/queries.js';
 import * as tags from './operations/tags.js';
+import * as portfolio from './operations/portfolio.js';
 import { amountToCents, formatCurrency, printTable, printJson } from './utils/format.js';
 import { makeImportedId } from './utils/imported-id.js';
 import { parseInstallPayload } from './payload.js';
@@ -1057,6 +1058,60 @@ async function handleQuery(client: ActualClient, sub: string, flags: Record<stri
   }
 }
 
+async function handlePortfolio(client: ActualClient, sub: string, flags: Record<string, string>) {
+  switch (sub) {
+    case 'list': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const holdings = await portfolio.listHoldings(client, accountId);
+      if (isJson(flags)) return printJson(holdings);
+      ui.printHoldings(holdings, accountName);
+      break;
+    }
+    case 'holding': {
+      const symbol = requireFlag(flags, 'symbol');
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const detail = await portfolio.getHolding(client, symbol, accountId);
+      if (isJson(flags)) return printJson(detail);
+      if (!detail) {
+        console.log(`No holding found for symbol "${symbol}"${accountName ? ` in ${accountName}` : ''}.`);
+        break;
+      }
+      ui.printHoldingDetail(detail);
+      break;
+    }
+    case 'trades': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const trades = await portfolio.listTrades(client, {
+        symbol: getFlag(flags, 'symbol'),
+        account: accountId,
+        kind: getFlag(flags, 'kind') as any,
+        start: getFlag(flags, 'start'),
+        end: getFlag(flags, 'end'),
+      });
+      if (isJson(flags)) return printJson(trades);
+      ui.printTrades(trades);
+      break;
+    }
+    case 'summary': {
+      const summary = await portfolio.getSummary(client);
+      if (isJson(flags)) return printJson(summary);
+      ui.printPortfolioSummary(summary);
+      break;
+    }
+    case 'accounts': {
+      const accts = await portfolio.getPortfolioAccounts(client);
+      if (isJson(flags)) return printJson(accts);
+      ui.printPortfolioAccounts(accts);
+      break;
+    }
+    default:
+      throw new Error(`Unknown portfolio subcommand: ${sub}. Use: list, holding, trades, summary, accounts`);
+  }
+}
+
 export function printHelp() {
   ui.printHelp();
 }
@@ -1132,6 +1187,7 @@ export async function executeParsedCommand(
     case 'schedules': await handleSchedules(client, writer, subcommand, flags, positional); break;
     case 'budgets': await handleBudgets(client, writer, subcommand, flags); break;
     case 'query': await handleQuery(client, subcommand, flags, positional); break;
+    case 'portfolio': await handlePortfolio(client, subcommand, flags); break;
     default: console.error(`Unknown command: ${command}`); printHelp();
   }
 }

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { colors, sym, formatAmount, header, subheader, row, divider, badge, statusDot } from './theme.js';
+import { formatCurrency, printTable } from '../utils/format.js';
 
 // ── Brand ─────────────────────────────────────────────────────
 
@@ -308,6 +309,7 @@ export function printHelp() {
   console.log(cmd('schedules', 'List/manage schedules'));
   console.log(cmd('budgets', 'List/switch budgets and manage budget amounts'));
   console.log(cmd('query', 'Smart queries (spending, uncategorized)'));
+  console.log(cmd('portfolio', 'Investment holdings and trade activity (read-only)'));
   console.log(cmd('backup', 'List/clean backups'));
   console.log('');
 
@@ -330,6 +332,116 @@ export function printHelp() {
   console.log(`  ${colors.dim('$')} ${colors.secondary('arc')} budgets month --month=2026-03`);
   console.log(`  ${colors.dim('$')} ${colors.secondary('arc')} query spending --month=2026-03`);
   console.log('');
+}
+
+// ── Portfolio ─────────────────────────────────────────────────
+
+function pctStr(pct: number | undefined): string {
+  if (pct == null) return '';
+  const v = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+  return v;
+}
+
+export function printHoldings(holdings: any[], accountName?: string) {
+  console.log(header(`Holdings${accountName ? ' — ' + accountName : ''} (${holdings.length})`));
+  if (holdings.length === 0) {
+    console.log(`  ${colors.muted('No holdings found in detailed investment accounts.')}\n`);
+    return;
+  }
+  printTable(holdings.map((h: any) => ({
+    symbol: h.symbol,
+    class: h.assetClass,
+    qty: h.quantity,
+    price: formatCurrency(h.markPrice || 0),
+    value: formatCurrency(h.marketValue || 0),
+    'P/L %': pctStr(h.unrealizedPnlPct),
+    account: h.account,
+  })));
+  const total = holdings.reduce((s: number, h: any) => s + (h.marketValue || 0), 0);
+  console.log(`\nTotal market value: ${formatCurrency(total)}`);
+}
+
+export function printHoldingDetail(detail: any) {
+  const h = detail.holding;
+  console.log(header(`Holding — ${h.symbol}${h.name ? ' (' + h.name + ')' : ''}`));
+  const avgCost = h.costBasisPrice != null
+    ? formatCurrency(h.costBasisPrice)
+    : (h.costBasisMoney != null && h.quantity
+        ? formatCurrency(Math.round(h.costBasisMoney / h.quantity))
+        : colors.muted('—'));
+  console.log(row('Account', h.account));
+  console.log(row('Asset class', h.assetClass));
+  console.log(row('Quantity', String(h.quantity)));
+  console.log(row('Market price', formatCurrency(h.markPrice || 0)));
+  console.log(row('Average cost', String(avgCost)));
+  console.log(row('Market value', formatCurrency(h.marketValue || 0)));
+  console.log(row('Unrealized P/L', h.unrealizedPnl != null
+    ? `${formatCurrency(h.unrealizedPnl)} (${pctStr(h.unrealizedPnlPct) || '—'})`
+    : colors.muted('—')));
+  console.log(row('Allocation', `${detail.allocationPct.toFixed(2)}% of ${h.account}`));
+
+  console.log(header(`Trades (${detail.trades.length})`));
+  if (detail.trades.length === 0) {
+    console.log(`  ${colors.muted('No trade activity recorded.')}\n`);
+    return;
+  }
+  printTable(detail.trades.map((t: any) => ({
+    date: t.date,
+    kind: t.kind,
+    detail: (t.detail || '').slice(0, 50),
+    amount: formatCurrency(t.amount || 0),
+  })));
+}
+
+export function printTrades(trades: any[]) {
+  console.log(header(`Trades (${trades.length})`));
+  if (trades.length === 0) {
+    console.log(`  ${colors.muted('No trade activity found.')}\n`);
+    return;
+  }
+  printTable(trades.map((t: any) => ({
+    date: t.date,
+    symbol: t.symbol,
+    kind: t.kind,
+    detail: (t.detail || '').slice(0, 44),
+    amount: formatCurrency(t.amount || 0),
+    account: t.account,
+  })));
+}
+
+export function printPortfolioSummary(summary: any) {
+  console.log(header('Portfolio Summary'));
+  console.log(row('Total market value', formatCurrency(summary.totalMarketValue || 0)));
+  console.log(row('Total unrealized P/L', formatCurrency(summary.totalUnrealizedPnl || 0)));
+
+  console.log(subheader('By account'));
+  printTable((summary.byAccount || []).map((s: any) => ({
+    account: s.key,
+    value: formatCurrency(s.marketValue || 0),
+    '%': s.pct.toFixed(2) + '%',
+  })));
+
+  console.log(subheader('By asset class'));
+  printTable((summary.byAssetClass || []).map((s: any) => ({
+    'asset class': s.key,
+    value: formatCurrency(s.marketValue || 0),
+    '%': s.pct.toFixed(2) + '%',
+  })));
+}
+
+export function printPortfolioAccounts(accounts: any[]) {
+  console.log(header(`Investment Accounts (${accounts.length})`));
+  if (accounts.length === 0) {
+    console.log(`  ${colors.muted('No investment accounts found.')}\n`);
+    return;
+  }
+  printTable(accounts.map((a: any) => ({
+    name: a.name,
+    type: a.type,
+    mode: a.mode,
+    source: a.src,
+    value: a.mode === 'detailed' ? formatCurrency(a.value || 0) : colors.muted('—'),
+  })));
 }
 
 // ── Generic Success/Error ─────────────────────────────────────

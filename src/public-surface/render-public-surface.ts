@@ -38,6 +38,7 @@ const GROUP_ORDER: readonly PublicOperationGroup[] = [
   "schedules",
   "budgets",
   "query",
+  "portfolio",
 ];
 
 const GROUP_TITLES: Record<PublicOperationGroup, string> = {
@@ -50,6 +51,7 @@ const GROUP_TITLES: Record<PublicOperationGroup, string> = {
   schedules: "Schedules",
   budgets: "Budgets",
   query: "Query",
+  portfolio: "Portfolio",
 };
 
 const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
@@ -65,6 +67,8 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
   budgets:
     "Inspect budget months, set budgeted amounts, and switch between budgets.",
   query: "Read-only reports and ad-hoc Actual queries.",
+  portfolio:
+    "Track investment holdings and trade activity (read-only). Investment data lives in account notes (`#investment:` / `#hold:v1:`) and `#act:`-tagged transactions.",
 };
 
 function groupOperations(

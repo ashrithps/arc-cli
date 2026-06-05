@@ -51,6 +51,7 @@ import * as scheduleOps from '../operations/schedules.js';
 import * as budgetOps from '../operations/budgets.js';
 import * as queryOps from '../operations/queries.js';
 import * as tagOps from '../operations/tags.js';
+import * as portfolioOps from '../operations/portfolio.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -541,6 +542,25 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     return queryOps.getMonthlyBalances(client, id, months);
   },
   arc_query_custom: async ({ client }, { q }) => queryOps.runCustomQuery(client, JSON.parse(q)),
+
+  // portfolio (read-only investment views) ─────────────────────────────────────
+  arc_portfolio_list: async ({ client }, { account }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return portfolioOps.listHoldings(client, accountId);
+  },
+  arc_portfolio_holding: async ({ client }, { symbol, account }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return portfolioOps.getHolding(client, symbol, accountId);
+  },
+  arc_portfolio_trades: async ({ client }, { symbol, account, kind, start, end }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return portfolioOps.listTrades(client, { symbol, account: accountId, kind, start, end });
+  },
+  arc_portfolio_summary: async ({ client }) => portfolioOps.getSummary(client),
+  arc_portfolio_accounts: async ({ client }) => portfolioOps.getPortfolioAccounts(client),
 };
 
 // ── Introspection ───────────────────────────────────────────────────────────
@@ -567,6 +587,7 @@ const AMOUNT_BEARING_GROUPS = new Set<PublicOperation['group']>([
   'transactions',
   'budgets',
   'query',
+  'portfolio',
 ]);
 
 const AMOUNT_REMINDER =

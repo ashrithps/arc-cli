@@ -1023,4 +1023,80 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     },
     defaultExposure: "advanced",
   },
+
+  // ── portfolio (read-only investment views) ──────────────────────────────────
+  {
+    id: "portfolio.list",
+    group: "portfolio",
+    subcommand: "list",
+    mcpTool: "arc_portfolio_list",
+    mode: "read",
+    description: "List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %).",
+    examples: ["arc portfolio list", "arc portfolio list --account 'IBKR' --json"],
+    inputSchema: {
+      account: accountRef.optional(),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "portfolio.holding",
+    group: "portfolio",
+    subcommand: "holding",
+    mcpTool: "arc_portfolio_holding",
+    mode: "read",
+    description: "Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger.",
+    examples: ["arc portfolio holding --symbol AAPL", "arc portfolio holding --symbol SOL --account 'Crypto'"],
+    inputSchema: {
+      symbol: z.string().describe("Holding symbol (case-insensitive)."),
+      account: accountRef.optional(),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "portfolio.trades",
+    group: "portfolio",
+    subcommand: "trades",
+    mcpTool: "arc_portfolio_trades",
+    mode: "read",
+    description: "Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts.",
+    examples: ["arc portfolio trades --symbol AAPL", "arc portfolio trades --kind dividend --start 2026-01-01 --json"],
+    inputSchema: {
+      symbol: z.string().optional().describe("Filter by symbol (case-insensitive substring of the note's leading token)."),
+      account: accountRef.optional(),
+      kind: z
+        .enum([
+          "buy", "sell", "commission", "fee", "tax",
+          "realized", "dividend", "interest", "deposit", "withdrawal", "other",
+        ])
+        .optional()
+        .describe("Filter by activity kind."),
+      start: dateStr.optional(),
+      end: dateStr.optional(),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "portfolio.summary",
+    group: "portfolio",
+    subcommand: "summary",
+    mcpTool: "arc_portfolio_summary",
+    mode: "read",
+    description: "Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class.",
+    examples: ["arc portfolio summary", "arc portfolio summary --json"],
+    inputSchema: { json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
+    id: "portfolio.accounts",
+    group: "portfolio",
+    subcommand: "accounts",
+    mcpTool: "arc_portfolio_accounts",
+    mode: "read",
+    description: "List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.",
+    examples: ["arc portfolio accounts", "arc portfolio accounts --json"],
+    inputSchema: { json: jsonFlag },
+    defaultExposure: "default",
+  },
 ];

@@ -48,7 +48,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 59 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 70 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -520,6 +520,40 @@ Read-only reports and ad-hoc Actual queries.
 
   ```bash
   arc query custom --q '{"table":"transactions","select":["id","amount"]}'
+  ```
+
+## Portfolio
+
+Track investment holdings and trade activity (read-only). Investment data lives in account notes (`#investment:` / `#hold:v1:`) and `#act:`-tagged transactions.
+
+- **`arc portfolio list`** — List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %).
+
+  ```bash
+  arc portfolio list
+  ```
+
+- **`arc portfolio holding`** — Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger.
+
+  ```bash
+  arc portfolio holding --symbol AAPL
+  ```
+
+- **`arc portfolio trades`** — Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts.
+
+  ```bash
+  arc portfolio trades --symbol AAPL
+  ```
+
+- **`arc portfolio summary`** — Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class.
+
+  ```bash
+  arc portfolio summary
+  ```
+
+- **`arc portfolio accounts`** — List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.
+
+  ```bash
+  arc portfolio accounts
   ```
 
 <!-- END:ARC_OPERATIONS_README -->

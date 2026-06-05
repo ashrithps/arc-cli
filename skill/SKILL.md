@@ -978,6 +978,65 @@ arc query monthly-balances --account 'Checking' --months 12
 arc query custom --q '{"table":"transactions","select":["id","amount"]}'
 ```
 
+## Portfolio
+
+Track investment holdings and trade activity (read-only). Investment data lives in account notes (`#investment:` / `#hold:v1:`) and `#act:`-tagged transactions.
+
+### `arc portfolio list`
+
+- mode: **read**
+- mcp tool: `arc_portfolio_list`
+- List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %).
+
+```bash
+arc portfolio list
+arc portfolio list --account 'IBKR' --json
+```
+
+### `arc portfolio holding`
+
+- mode: **read**
+- mcp tool: `arc_portfolio_holding`
+- Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger.
+
+```bash
+arc portfolio holding --symbol AAPL
+arc portfolio holding --symbol SOL --account 'Crypto'
+```
+
+### `arc portfolio trades`
+
+- mode: **read**
+- mcp tool: `arc_portfolio_trades`
+- Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts.
+
+```bash
+arc portfolio trades --symbol AAPL
+arc portfolio trades --kind dividend --start 2026-01-01 --json
+```
+
+### `arc portfolio summary`
+
+- mode: **read**
+- mcp tool: `arc_portfolio_summary`
+- Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class.
+
+```bash
+arc portfolio summary
+arc portfolio summary --json
+```
+
+### `arc portfolio accounts`
+
+- mode: **read**
+- mcp tool: `arc_portfolio_accounts`
+- List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.
+
+```bash
+arc portfolio accounts
+arc portfolio accounts --json
+```
+
 ## MCP Parity
 
 Running `arc mcp` starts a stdio MCP server that registers one tool per entry above. Tool names follow `arc_<group>_<subcommand>` (hyphens become underscores). The same argument names, defaults, and validation rules apply on both surfaces.
