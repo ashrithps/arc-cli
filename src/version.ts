@@ -102,8 +102,14 @@ export async function fetchPublishedVersion(
 export type UpdateStatus =
   | { state: 'current'; local: VersionStamp; remote: VersionStamp }
   | { state: 'behind'; local: VersionStamp | null; remote: VersionStamp }
+  | { state: 'ahead'; local: VersionStamp; remote: VersionStamp }
   | { state: 'unknown-local'; local: null; remote: VersionStamp }
   | { state: 'unreachable'; local: VersionStamp | null; remote: null };
+
+function builtAtMs(stamp: VersionStamp): number {
+  const t = Date.parse(stamp.builtAt);
+  return Number.isFinite(t) ? t : 0;
+}
 
 export function compareVersions(
   local: VersionStamp | null,
@@ -112,5 +118,13 @@ export function compareVersions(
   if (!remote) return { state: 'unreachable', local, remote: null };
   if (!local) return { state: 'unknown-local', local: null, remote };
   if (local.commit === remote.commit) return { state: 'current', local, remote };
+
+  // Commit hashes carry no ordering, so a mismatch alone cannot tell "behind"
+  // from "ahead". Build timestamps can. Installing from a local checkout (which
+  // install.sh supports) legitimately puts you ahead of what is published, and
+  // nagging that person to "update" to an older build is worse than useless.
+  // Unparseable timestamps sort to 0, which lands on `behind` — the safe
+  // default, since it only ever suggests re-running the installer.
+  if (builtAtMs(local) > builtAtMs(remote)) return { state: 'ahead', local, remote };
   return { state: 'behind', local, remote };
 }

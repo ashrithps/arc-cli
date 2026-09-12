@@ -1440,6 +1440,14 @@ async function handleUpdate(flags: Record<string, string>): Promise<void> {
       console.log('Already up to date.');
       return;
 
+    case 'ahead':
+      console.log(`Published: ${formatVersion(status.remote)}`);
+      console.log(
+        'This build is newer than what is published — you are running a local ' +
+        'checkout. Nothing to update.'
+      );
+      return;
+
     case 'unknown-local':
       console.log(`Published: ${formatVersion(status.remote)}`);
       console.log(
