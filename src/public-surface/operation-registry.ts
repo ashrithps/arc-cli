@@ -1419,4 +1419,24 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     },
     defaultExposure: "default",
   },
+
+  // ── server ─────────────────────────────────────────────────────────────────
+  {
+    id: "server.wake",
+    group: "server",
+    subcommand: "wake",
+    mcpTool: "arc_server_wake",
+    mode: "read",
+    description:
+      "Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one.",
+    examples: ["arc server wake", "arc server wake --timeout 120 --json"],
+    inputSchema: {
+      timeout: z
+        .number()
+        .optional()
+        .describe("Seconds to wait before giving up. Defaults to 90."),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
 ];

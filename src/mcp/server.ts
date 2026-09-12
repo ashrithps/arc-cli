@@ -54,6 +54,7 @@ import * as tagOps from '../operations/tags.js';
 import * as portfolioOps from '../operations/portfolio.js';
 import * as goalOps from '../operations/goals.js';
 import * as splitOps from '../operations/splits.js';
+import * as serverOps from '../operations/server.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -630,6 +631,12 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     transactionOps.markRefund(client, writer, id),
   arc_transactions_unrefund: async ({ client, writer }, { id }) =>
     transactionOps.undoRefund(client, writer, id),
+  // server lifecycle ─────────────────────────────────────────────────────────
+  arc_server_wake: async ({ client }, { timeout }) =>
+    serverOps.wakeServer(client, {
+      timeoutMs: typeof timeout === 'number' ? Math.round(timeout * 1000) : undefined,
+    }),
+
   arc_transactions_refunds: async ({ client }, { account, start, end }) => {
     let accountId: string | undefined;
     if (account) accountId = await accountOps.resolveAccountId(client, account);

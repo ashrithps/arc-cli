@@ -26,7 +26,8 @@ export type PublicOperationGroup =
   | "query"
   | "portfolio"
   | "goals"
-  | "splits";
+  | "splits"
+  | "server";
 
 export type PublicOperationMode = "read" | "write";
 

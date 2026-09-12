@@ -245,12 +245,68 @@ export class ActualClient {
       } catch (error) {
         lastError = error;
         if (attempt === attempts || !shouldRetry(error, attempt)) break;
+        // Retries can add up to a minute across the nested connect/download
+        // loops. Say what is happening rather than appearing to hang.
+        console.error(
+          `[Client] ${label} attempt ${attempt}/${attempts} failed ` +
+          `(${this.formatError(error).slice(0, 80)}) — retrying…`
+        );
         await beforeRetry?.(error, attempt);
         await this.sleep(baseDelayMs * attempt);
       }
     }
 
     throw new Error(`${label} failed after ${attempts} attempts: ${this.formatError(lastError)}`);
+  }
+
+  /**
+   * Poll the server's `/health` endpoint until it answers.
+   *
+   * Arc's managed servers run on Cloud Run with `minScale: 0`, so the first
+   * request after an idle period pays a cold start. Absorbing that with a
+   * cheap unauthenticated probe is much better than letting the multi-megabyte
+   * budget download be the request that eats it: a download interrupted
+   * mid-flight is a reset connection and a retry of the whole transfer,
+   * whereas this costs a few hundred bytes.
+   *
+   * Never throws. A server that cannot be probed still gets the normal
+   * connect path and its error reporting — this is an optimisation, not a
+   * gate, and it must not become a new way for `arc` to fail.
+   */
+  async waitForServer(options: {
+    timeoutMs?: number;
+    perAttemptMs?: number;
+    onProgress?: (info: { attempt: number; elapsedMs: number }) => void;
+  } = {}): Promise<{ ready: boolean; elapsedMs: number; attempts: number; wasCold: boolean }> {
+    const timeoutMs = options.timeoutMs ?? this.getEnvInt('ARC_WAKE_TIMEOUT_MS', 90_000);
+    const perAttemptMs = options.perAttemptMs ?? 10_000;
+    const started = Date.now();
+    const url = `${this.config.serverURL.replace(/\/+$/, '')}/health`;
+
+    let attempt = 0;
+    while (Date.now() - started < timeoutMs) {
+      attempt++;
+      try {
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(perAttemptMs),
+          headers: { 'accept-encoding': 'identity' },
+        });
+        if (res.ok) {
+          const elapsedMs = Date.now() - started;
+          return { ready: true, elapsedMs, attempts: attempt, wasCold: attempt > 1 || elapsedMs > 1500 };
+        }
+      } catch {
+        // Connection refused / reset / timed out — the instance is still
+        // starting. Fall through and try again.
+      }
+
+      options.onProgress?.({ attempt, elapsedMs: Date.now() - started });
+      // Cold starts resolve in seconds, so poll steadily rather than backing
+      // off aggressively and sitting idle after the server is already up.
+      await this.sleep(Math.min(1000 * attempt, 3000));
+    }
+
+    return { ready: false, elapsedMs: Date.now() - started, attempts: attempt, wasCold: true };
   }
 
   private async downloadAndLoadBudget(): Promise<void> {
@@ -447,6 +503,21 @@ export class ActualClient {
     }
 
     this.applySelectedBudgetPassword(env);
+
+    // Absorb a cold start with a cheap probe before the budget download, and
+    // say so — a silent 30-second pause reads as a hang.
+    const wake = await this.waitForServer({
+      onProgress: ({ elapsedMs }) => {
+        if (elapsedMs > 2000) {
+          console.error(
+            `[Client] Waiting for the server to start… ${Math.round(elapsedMs / 1000)}s`
+          );
+        }
+      },
+    });
+    if (wake.ready && wake.wasCold) {
+      console.error(`[Client] Server ready after ${(wake.elapsedMs / 1000).toFixed(1)}s`);
+    }
 
     try {
       await this.retry(

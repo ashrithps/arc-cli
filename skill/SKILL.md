@@ -115,6 +115,32 @@ Use `native.amount` and `native.cleanNotes` when displaying transactions from a 
 
 **Never extrapolate** one account's currency to another or to the budget as a whole. Each account stands alone. Only emit a currency symbol next to a number when that specific number came from an account with a known currency.
 
+## Sleeping Servers (read this before you conclude Arc is broken)
+
+Managed Arc servers run on Cloud Run and scale to zero. A server that has been
+idle is genuinely stopped, and the first request after that pays a cold start —
+a few seconds, occasionally longer.
+
+You do not have to do anything about this. Every command probes the server and
+waits for it before doing real work, then retries the connection and the budget
+download if the instance is still coming up. A first command that takes ten
+seconds and then succeeds is normal, not a fault.
+
+Two things follow:
+
+- **Do not treat a slow first call as an error.** If a tool call fails with a
+  connection reset, a timeout, or "reason: internal", the server was very
+  likely still starting. Call `arc_server_wake` and try once more before
+  reporting a problem to the user.
+- **Warm up before a batch.** If you are about to make many calls, or you are
+  driving Arc through an MCP client with a short request timeout, call
+  `arc_server_wake` first. It is a cheap unauthenticated probe, so it fits
+  inside a timeout that a cold start plus a multi-megabyte budget download
+  would not.
+
+`arc wake` is the command-line spelling, and `arc server wake` is the same
+thing.
+
 ## Note-Backed Features (goals, splits, refunds, portfolio)
 
 Several arc features do not live in their own Actual tables. They are stored as
@@ -1286,6 +1312,21 @@ arc splits remove --gid ab12cd --person Sam
 
 ```bash
 arc splits delete --gid ab12cd
+```
+
+## Server
+
+Server lifecycle. Managed Arc servers scale to zero, so one that has been idle must start before it can answer. Every other command absorbs this automatically; call `wake` when you would rather pay the wait up front.
+
+### `arc server wake`
+
+- mode: **read**
+- mcp tool: `arc_server_wake`
+- Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one.
+
+```bash
+arc server wake
+arc server wake --timeout 120 --json
 ```
 
 ## MCP Parity

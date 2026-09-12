@@ -19,6 +19,7 @@ import * as tags from './operations/tags.js';
 import * as portfolio from './operations/portfolio.js';
 import * as goals from './operations/goals.js';
 import * as splits from './operations/splits.js';
+import * as server from './operations/server.js';
 import { amountToCents, formatCurrency, printTable, printJson } from './utils/format.js';
 import { makeImportedId } from './utils/imported-id.js';
 import { parseInstallPayload } from './payload.js';
@@ -1092,6 +1093,7 @@ async function handleQuery(client: ActualClient, sub: string, flags: Record<stri
 
 
 
+
 async function handleSplits(
   client: ActualClient,
   writer: SafeWriter,
@@ -1416,6 +1418,54 @@ export async function executeParsedCommand(
  * Config is untouched: the installer only replaces `~/.arc-cli/app`, while
  * credentials live in `~/.arc-cli/config.json`.
  */
+/**
+ * `arc wake` — bring a sleeping server up before doing real work.
+ *
+ * Managed Arc servers run on Cloud Run and scale to zero, so the first
+ * command after an idle period pays a cold start. Every command already
+ * absorbs that automatically; this exists for the cases where you want it to
+ * happen *first* and visibly: before opening the TUI, before a scripted batch,
+ * or before pointing an agent at the MCP server.
+ */
+async function handleWake(flags: Record<string, string>) {
+  const client = ActualClient.fromEnv();
+  const timeoutFlag = getFlag(flags, 'timeout');
+  const timeoutMs = timeoutFlag ? Math.round(parseFloat(timeoutFlag) * 1000) : undefined;
+
+  const started = Date.now();
+  let announced = false;
+  const result = await client.waitForServer({
+    timeoutMs,
+    onProgress: ({ elapsedMs }) => {
+      if (isJson(flags)) return;
+      if (!announced) {
+        console.log('Server is asleep — waiting for it to start…');
+        announced = true;
+      } else if (elapsedMs > 3000) {
+        process.stdout.write(`  ${Math.round(elapsedMs / 1000)}s\n`);
+      }
+    },
+  });
+
+  const secs = (result.elapsedMs / 1000).toFixed(1);
+  const summary = !result.ready
+    ? `Server did not respond within ${secs}s after ${result.attempts} attempts. It may still be starting.`
+    : result.wasCold
+      ? `Server was asleep and is now ready (took ${secs}s).`
+      : `Server was already awake (${Math.round(result.elapsedMs)}ms).`;
+
+  if (isJson(flags)) return printJson({ ...result, summary });
+
+  if (!result.ready) {
+    console.error(
+      `${summary} Try again, or check the server URL with \`arc config show\`.`
+    );
+    process.exitCode = 1;
+    return;
+  }
+  console.log(summary);
+}
+
 async function handleUpdate(flags: Record<string, string>): Promise<void> {
   const checkOnly = flags.check === 'true';
   const local = getLocalVersion();
@@ -1516,6 +1566,17 @@ export async function main(
   if (command === 'update') {
     await handleUpdate(flags);
     return;
+  }
+
+  // `wake` and `server wake` are handled before the connect path on purpose:
+  // waking a sleeping server cannot require an established connection to it.
+  if (command === 'wake' || (command === 'server' && (subcommand === 'wake' || !subcommand))) {
+    await handleWake(flags);
+    return;
+  }
+
+  if (command === 'server') {
+    throw new Error(`Unknown server subcommand: ${subcommand}. Use: wake`);
   }
 
   if (command === 'backup') {

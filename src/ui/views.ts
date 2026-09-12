@@ -313,6 +313,8 @@ export function printHelp() {
   console.log(cmd('goals', 'Savings goals — progress, contributions, deadlines'));
   console.log(cmd('splits', 'Group splits — share a cost, track who owes you'));
   console.log(cmd('backup', 'List/clean backups'));
+  console.log(cmd('server', 'Server lifecycle (wake a sleeping server)'));
+  console.log(cmd('wake', 'Shortcut for `arc server wake`'));
   console.log(cmd('update', 'Update arc to the latest published build'));
   console.log(cmd('version', 'Show the installed build'));
   console.log('');

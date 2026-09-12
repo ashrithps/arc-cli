@@ -48,7 +48,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 89 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 90 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -82,6 +82,21 @@ Security:
 - Switch budgets later with `arc budgets switch --budget <id>`
 - `arc ui` launches the TUI
 - `arc mcp` starts the stdio MCP server
+
+## Sleeping Servers
+
+Managed Arc servers scale to zero, so one that has been idle has to start
+before it can answer. The first command after a quiet period takes a few
+seconds longer while that happens.
+
+Arc handles this for you — every command waits for the server and retries
+while it comes up. If you would rather pay the wait up front, before opening
+the TUI or running a batch:
+
+```bash
+arc wake              # or: arc server wake
+arc wake --timeout 120
+```
 
 ## Staying Up To Date
 
@@ -694,6 +709,16 @@ Share a transaction with other people and track what they owe you. Splits are a 
 
   ```bash
   arc splits delete --gid ab12cd
+  ```
+
+## Server
+
+Server lifecycle. Managed Arc servers scale to zero, so one that has been idle must start before it can answer. Every other command absorbs this automatically; call `wake` when you would rather pay the wait up front.
+
+- **`arc server wake`** — Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one.
+
+  ```bash
+  arc server wake
   ```
 
 <!-- END:ARC_OPERATIONS_README -->
