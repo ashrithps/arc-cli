@@ -33,6 +33,57 @@ type ActualApiModule = Omit<typeof actualApi, 'getTransactions'> & {
   ): ReturnType<typeof actualApi.getTransactions>;
 };
 
+/**
+ * Errors worth another attempt.
+ *
+ * Bias towards retrying: a needless retry costs a few seconds, while
+ * failing to retry a transient error breaks the command outright. Arc's
+ * managed servers run on Cloud Run and scale to zero, so the first request
+ * after an idle period routinely hits a cold start — the connection is
+ * refused, times out, or is reset part-way through the budget download.
+ *
+ * Two patterns here were previously wrong and account for most of the hard
+ * failures seen in the field:
+ *   - `/internal$/i` was anchored, but Actual's message is
+ *     "…reason: internal, fileId: <uuid>", so it never matched.
+ *   - undici reports a connection dropped mid-transfer as `terminated`,
+ *     which matched nothing at all.
+ */
+const TRANSIENT_ERROR_PATTERNS = [
+  /fetch failed/i,
+  /download-failure/i,
+  /could not get remote files/i,
+  /network/i,
+  /timed?\s*out/i,
+  /econnreset/i,
+  /econnrefused/i,
+  /econnaborted/i,
+  /etimedout/i,
+  /ehostunreach/i,
+  /enetunreach/i,
+  /enotfound/i,
+  /eai_again/i,
+  /epipe/i,
+  /socket hang up/i,
+  /other side closed/i,
+  /\bterminated\b/i,
+  /\baborted\b/i,
+  /reason:\s*internal/i,
+  /\b(?:429|502|503|504)\b/,
+  /service unavailable/i,
+  /bad gateway/i,
+  /gateway time-?out/i,
+];
+
+/**
+ * True when an Actual/network error is worth retrying. Exported so the
+ * classification can be tested directly — it is the difference between a
+ * cold-starting server being a two-second pause and a hard failure.
+ */
+export function isTransientActualErrorMessage(message: string): boolean {
+  return TRANSIENT_ERROR_PATTERNS.some(pattern => pattern.test(message));
+}
+
 type ActualLib = Awaited<ReturnType<typeof actualApi.init>>;
 
 export class ActualClient {
@@ -89,18 +140,6 @@ export class ActualClient {
   }
 
   private initialized = false;
-  private readonly transientErrorPatterns = [
-    /fetch failed/i,
-    /download-failure/i,
-    /could not get remote files/i,
-    /network/i,
-    /timed?\s*out/i,
-    /econnreset/i,
-    /enotfound/i,
-    /eai_again/i,
-    /socket hang up/i,
-    /internal$/i,
-  ];
 
   private getEnvInt(name: string, fallback: number): number {
     const raw = process.env[name];
@@ -179,8 +218,7 @@ export class ActualClient {
   }
 
   private isTransientActualError(error: unknown): boolean {
-    const message = this.formatError(error);
-    return this.transientErrorPatterns.some(pattern => pattern.test(message));
+    return isTransientActualErrorMessage(this.formatError(error));
   }
 
   private async retry<T>(
