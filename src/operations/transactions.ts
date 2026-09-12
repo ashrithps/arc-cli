@@ -1,4 +1,11 @@
 import type { ActualClient } from '../client.js';
+import {
+  buildRefundMark,
+  buildRefundUndo,
+  parseRefundMarker,
+  refundEligibility,
+  stripRefundMarkerForDisplay,
+} from '../codecs/refund-marker.js';
 import type { SafeWriter } from '../safe-writer.js';
 import type { Transaction, TransactionCreate, SubTransaction, ImportResult } from '../types.js';
 import { validateId, validateDate, validateTransaction, validateSplitAmounts } from '../utils/validation.js';
@@ -86,7 +93,7 @@ export async function importTransaction(
   validateId(accountId);
   const validated = validateTransaction({ ...tx, cleared: tx.cleared ?? true });
 
-  const result = await writer.write(
+  const result = await writer.write<ImportResult>(
     `Import transaction: ${tx.payee_name || tx.payee || 'unknown'} on ${tx.date}`,
     () => (client.api as any).importTransactions(accountId, [validated])
   );
@@ -133,7 +140,7 @@ export async function importTransactions(
   validateId(accountId);
   const validated = txs.map(tx => validateTransaction({ ...tx, cleared: tx.cleared ?? true }));
 
-  const result = await writer.write(
+  const result = await writer.write<ImportResult>(
     `Import ${validated.length} transactions`,
     () => (client.api as any).importTransactions(accountId, validated)
   );
@@ -157,7 +164,12 @@ export async function updateTransaction(
 
   const result = await writer.write(
     `Update transaction: ${id}`,
-    () => client.api.updateTransaction(id, fields)
+    // SubTransaction is the reduced shape the CLI accepts for split legs;
+    // TransactionEntity expects full transaction rows there.
+    () => client.api.updateTransaction(
+      id,
+      fields as Parameters<typeof client.api.updateTransaction>[1]
+    )
   );
 
   if (!result.success) throw new Error(result.error);
@@ -451,4 +463,138 @@ export async function createTransfer(
 
   if (!result.success) throw new Error(result.error);
   return result.data || '';
+}
+
+// ── Refunds ─────────────────────────────────────────────────────────────────
+
+/**
+ * Mark a transaction refunded: zero its amount and record what it was in a
+ * `#refund|` note token, so the row stays visible and struck through rather
+ * than being deleted or offset by a fake income row.
+ *
+ * Refuses the rows where zeroing would corrupt data — transfers (desyncs the
+ * pair), splits (Actual requires parent = sum of children) and reconciled
+ * rows (Actual refuses the edit) — naming the reason rather than failing
+ * opaquely.
+ */
+export async function markRefund(
+  client: ActualClient,
+  writer: SafeWriter,
+  transactionId: string
+): Promise<{ id: string; amount: number; notes: string }> {
+  client.ensureConnected();
+  validateId(transactionId);
+
+  const tx = await findTransactionById(client, transactionId);
+  const eligible = refundEligibility(tx as any);
+  if (!eligible.ok) {
+    throw new Error(
+      `Transaction ${transactionId} cannot be refunded: ${eligible.reason}. ` +
+      refundReasonHelp(eligible.reason)
+    );
+  }
+
+  const patch = buildRefundMark(tx.notes, tx.amount ?? 0);
+  const result = await writer.write(`Mark refund: ${transactionId}`, () =>
+    client.api.updateTransaction(transactionId, patch as any)
+  );
+  if (!result.success) throw new Error(result.error);
+  return { id: transactionId, amount: patch.amount, notes: patch.notes };
+}
+
+/** Undo a refund, restoring the original amount, direction and note. */
+export async function undoRefund(
+  client: ActualClient,
+  writer: SafeWriter,
+  transactionId: string
+): Promise<{ id: string; amount: number; notes: string }> {
+  client.ensureConnected();
+  validateId(transactionId);
+
+  const tx = await findTransactionById(client, transactionId);
+  const undo = buildRefundUndo(tx.notes);
+  if (!undo) throw new Error(`Transaction ${transactionId} is not marked as a refund.`);
+
+  // buildRefundUndo returns MAJOR units plus the direction to restore; the
+  // CLI writes signed minor units, so fold the two together here.
+  const signedMinor = Math.round(undo.amount * 100) * (undo.type === 'expense' ? -1 : 1);
+
+  const result = await writer.write(`Undo refund: ${transactionId}`, () =>
+    client.api.updateTransaction(transactionId, {
+      amount: signedMinor,
+      notes: undo.notes,
+    } as any)
+  );
+  if (!result.success) throw new Error(result.error);
+  return { id: transactionId, amount: signedMinor, notes: undo.notes };
+}
+
+/** Every refunded transaction, with the original amount recovered. */
+export async function listRefunds(
+  client: ActualClient,
+  options: { start?: string; end?: string; account?: string } = {}
+): Promise<Array<{
+  id: string;
+  date: string;
+  payee_name?: string;
+  accountName: string;
+  originalAmount: number;
+  direction: 'expense' | 'income';
+  refundedOn: string;
+  notes: string | null;
+}>> {
+  client.ensureConnected();
+  const accounts = await client.api.getAccounts();
+  const scoped = options.account
+    ? (accounts as any[]).filter(a => a.id === options.account || a.name === options.account)
+    : (accounts as any[]);
+
+  const out: any[] = [];
+  for (const account of scoped) {
+    const txns = await client.api.getTransactions(account.id, options.start, options.end);
+    for (const t of txns as any[]) {
+      const marker = parseRefundMarker(t.notes);
+      if (!marker) continue;
+      out.push({
+        id: t.id,
+        date: t.date,
+        payee_name: t.payee_name ?? undefined,
+        accountName: account.name,
+        originalAmount: marker.dir === 'expense' ? -marker.amt : marker.amt,
+        direction: marker.dir,
+        refundedOn: marker.on,
+        notes: stripRefundMarkerForDisplay(t.notes),
+      });
+    }
+  }
+  out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return out;
+}
+
+function refundReasonHelp(reason: string): string {
+  switch (reason) {
+    case 'transfer':
+      return 'Zeroing one leg of a transfer would desync the pair — delete the transfer instead.';
+    case 'split':
+      return 'Actual requires a split parent to equal the sum of its children.';
+    case 'reconciled':
+      return 'Unlock it first with `arc reconcile unlock`.';
+    case 'already':
+      return 'Use `arc transactions unrefund` to undo it.';
+    case 'zero':
+      return 'There is nothing to refund.';
+    default:
+      return '';
+  }
+}
+
+/** Locate a transaction by id across every account. */
+async function findTransactionById(client: ActualClient, transactionId: string): Promise<any> {
+  const accounts = await client.api.getAccounts();
+  for (const account of accounts as any[]) {
+    const txns = await client.api.getTransactions(account.id);
+    const tx = (txns as any[]).find(t => t.id === transactionId);
+    if (tx) return tx;
+  }
+  throw new Error(`Transaction not found: ${transactionId}`);
 }

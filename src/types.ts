@@ -66,8 +66,8 @@ export interface Account {
   type?: string;
   offbudget?: boolean;
   closed?: boolean;
-  balance_current?: number;
-  balance_available?: number;
+  balance_current?: number | null;
+  balance_available?: number | null;
 }
 
 // ── Transactions ──────────────────────────────────────────────
@@ -77,7 +77,7 @@ export interface Transaction {
   account: string;
   date: string;
   amount: number;
-  payee?: string;
+  payee?: string | null;
   payee_name?: string;
   imported_payee?: string;
   category?: string;
@@ -101,7 +101,7 @@ export interface SubTransaction {
   amount: number;
   category?: string;
   notes?: string;
-  payee?: string;
+  payee?: string | null;
   transfer_account?: string;  // Account name for transfer splits
 }
 
@@ -186,7 +186,12 @@ export interface RuleCondition {
 }
 
 export interface RuleAction {
-  field: string;
+  /**
+   * Optional because not every action carries one: Actual's
+   * `SetSplitAmountRuleActionEntity` (the "distribute remainder" action) has
+   * no `field` at all.
+   */
+  field?: string;
   op?: string;
   value: any;
   type?: string;
@@ -195,7 +200,12 @@ export interface RuleAction {
 
 export interface Rule {
   id: string;
-  stage?: 'pre' | 'default' | 'post';
+  /**
+   * Actual represents the default stage as `null`, not the string "default".
+   * Both spellings are accepted here: `null` is what the API hands back, and
+   * `'default'` is the friendlier form the CLI accepts on input.
+   */
+  stage?: 'pre' | 'default' | 'post' | null;
   conditionsOp?: 'and' | 'or';
   conditions: RuleCondition[];
   actions: RuleAction[];
@@ -212,7 +222,12 @@ export interface Schedule {
   posts_transaction?: boolean;
   tombstone?: boolean;
   date?: any;
-  amount?: number;
+  /**
+   * Actual schedules carry either a fixed amount or an "is between" range.
+   * Modelling this as a bare `number` silently dropped range schedules, which
+   * the app has supported since recurring schedules shipped.
+   */
+  amount?: number | { num1: number; num2: number };
   account?: string;
   payee?: string;
   category?: string;
@@ -258,9 +273,12 @@ export interface BudgetMonth {
 
 // ── Write Result ──────────────────────────────────────────────
 
-export interface WriteResult<T = any> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  backupPath?: string;
-}
+/**
+ * Discriminated on `success` so that `if (!result.success) throw` narrows
+ * `data` to `T` in the happy path. A single `success: boolean` field cannot
+ * do that, which is why every caller used to trip "Type 'T | undefined' is
+ * not assignable to type 'T'" after already checking for failure.
+ */
+export type WriteResult<T = any> =
+  | { success: true; data: T; error?: undefined; backupPath?: string }
+  | { success: false; data?: undefined; error: string; backupPath?: string };

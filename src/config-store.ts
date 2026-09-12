@@ -109,6 +109,12 @@ function resolveRuntimeConfig(
   if (!apiUrl) throw new Error('Missing runtime config value: apiUrl');
   if (!apiKey) throw new Error('Missing runtime config value: apiKey');
 
+  // apiUrl is the host we actually send credentials to, so it is the one that
+  // must satisfy the arc.moi restriction on every load — not just at bootstrap
+  // time in parseInstallPayload. Without this, ACTUAL_SERVER_URL (or a
+  // hand-edited ~/.arc-cli/config.json) silently bypasses the lock.
+  assertArcHost(apiUrl, env.ACTUAL_SERVER_URL ? 'ACTUAL_SERVER_URL' : 'apiUrl');
+
   const displayUrl = env.ACTUAL_DISPLAY_URL ?? saved?.displayUrl;
   if (displayUrl) {
     assertArcHost(displayUrl, env.ACTUAL_DISPLAY_URL ? 'ACTUAL_DISPLAY_URL' : 'displayUrl');

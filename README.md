@@ -48,7 +48,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 70 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 89 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -82,6 +82,24 @@ Security:
 - Switch budgets later with `arc budgets switch --budget <id>`
 - `arc ui` launches the TUI
 - `arc mcp` starts the stdio MCP server
+
+## Staying Up To Date
+
+```bash
+arc version          # what you have installed
+arc update --check   # is anything newer published
+arc update           # install it
+```
+
+`arc update` re-runs the published installer, so it refreshes the app snapshot,
+the launcher, the agent skill files and the Claude Desktop MCP entry in one go.
+Your config and credentials in `~/.arc-cli/config.json` are left alone — only
+`~/.arc-cli/app` is replaced.
+
+Restart any running `arc mcp` server afterwards so it picks up the new tools.
+
+If GitHub is unreachable, the equivalent manual command is the install one-liner
+above; running it again is always safe.
 
 ## Security Notes
 
@@ -186,6 +204,24 @@ Create, update, split, transfer, and batch-process transactions.
 
   ```bash
   arc transactions transfer --from 'Checking' --to 'Savings' --amount 500 --date 2026-04-10
+  ```
+
+- **`arc transactions refund`** — Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows.
+
+  ```bash
+  arc transactions refund --id <transaction-id>
+  ```
+
+- **`arc transactions unrefund`** — Undo a refund, restoring the original amount, its direction (expense or income), and the note.
+
+  ```bash
+  arc transactions unrefund --id <transaction-id>
+  ```
+
+- **`arc transactions refunds`** — List refunded transactions with the original amount recovered from the refund token, and when each was marked.
+
+  ```bash
+  arc transactions refunds
   ```
 
 - **`arc transactions batch-update`** — Apply field updates to many transactions in one call. Accepts a JSON array of {id, ...fields}. _(advanced)_
@@ -554,6 +590,110 @@ Track investment holdings and trade activity (read-only). Investment data lives 
 
   ```bash
   arc portfolio accounts
+  ```
+
+## Goals
+
+Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.
+
+- **`arc goals list`** — List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue).
+
+  ```bash
+  arc goals list
+  ```
+
+- **`arc goals show`** — Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track.
+
+  ```bash
+  arc goals show --goal 'Japan trip'
+  ```
+
+- **`arc goals create`** — Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too.
+
+  ```bash
+  arc goals create --account 'Savings' --target 5000 --deadline 2027-03-01
+  ```
+
+- **`arc goals update`** — Change a goal's name, target, deadline, behavior, color, or icon.
+
+  ```bash
+  arc goals update --goal 'Japan trip' --target 6000
+  ```
+
+- **`arc goals contribute`** — Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead.
+
+  ```bash
+  arc goals contribute --goal 'Japan trip' --amount 250
+  ```
+
+- **`arc goals current`** — Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time.
+
+  ```bash
+  arc goals current --goal 'Japan trip'
+  ```
+
+- **`arc goals archive`** — Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight.
+
+  ```bash
+  arc goals archive --goal 'Japan trip'
+  ```
+
+- **`arc goals reopen`** — Un-archive a goal.
+
+  ```bash
+  arc goals reopen --goal 'Japan trip'
+  ```
+
+- **`arc goals delete`** — Remove the goal overlay from an account. The account, its balance and its transactions are left untouched. _(advanced)_
+
+  ```bash
+  arc goals delete --goal 'Japan trip'
+  ```
+
+## Group Splits
+
+Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
+
+- **`arc splits list`** — List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled.
+
+  ```bash
+  arc splits list
+  ```
+
+- **`arc splits balances`** — Who owes you what. Totals each person's outstanding and already-settled amounts across every split.
+
+  ```bash
+  arc splits balances
+  ```
+
+- **`arc splits create`** — Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money.
+
+  ```bash
+  arc splits create --transaction <id> --people 'Sam,Kim' --mode equal --include-self
+  ```
+
+- **`arc splits settle`** — Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income.
+
+  ```bash
+  arc splits settle --gid ab12cd --person Sam
+  ```
+
+- **`arc splits reopen`** — Flip a settled share back to open.
+
+  ```bash
+  arc splits reopen --gid ab12cd --person Sam
+  ```
+
+- **`arc splits remove`** — Drop one person from a split, leaving everyone else in it.
+
+  ```bash
+  arc splits remove --gid ab12cd --person Sam
+  ```
+
+- **`arc splits delete`** — Delete an entire split group across every transaction carrying it. The transactions themselves are untouched. _(advanced)_
+
+  ```bash
+  arc splits delete --gid ab12cd
   ```
 
 <!-- END:ARC_OPERATIONS_README -->

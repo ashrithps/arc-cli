@@ -11,7 +11,9 @@ export async function getBudgetMonths(client: ActualClient): Promise<string[]> {
 export async function getBudgetMonth(client: ActualClient, month: string): Promise<BudgetMonth> {
   client.ensureConnected();
   validateMonth(month);
-  return await client.api.getBudgetMonth(month);
+  // The API types `categoryGroups` as `Record<string, unknown>[]`; BudgetMonth
+  // describes the same payload with the field names it actually carries.
+  return await client.api.getBudgetMonth(month) as unknown as BudgetMonth;
 }
 
 export async function setBudgetAmount(

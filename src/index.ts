@@ -17,9 +17,18 @@ import * as budgets from './operations/budgets.js';
 import * as queries from './operations/queries.js';
 import * as tags from './operations/tags.js';
 import * as portfolio from './operations/portfolio.js';
+import * as goals from './operations/goals.js';
+import * as splits from './operations/splits.js';
 import { amountToCents, formatCurrency, printTable, printJson } from './utils/format.js';
 import { makeImportedId } from './utils/imported-id.js';
 import { parseInstallPayload } from './payload.js';
+import {
+  compareVersions,
+  fetchPublishedVersion,
+  formatVersion,
+  getLocalVersion,
+  INSTALLER_URL,
+} from './version.js';
 import { startMcpServer, startHttpMcpServer } from './mcp/server.js';
 import * as ui from './ui/views.js';
 import {
@@ -453,7 +462,7 @@ async function handleTransactions(client: ActualClient, writer: SafeWriter, sub:
 
       console.log(`Found ${matches.length} uncategorized transactions matching "${payeePattern}":`);
       for (const t of matches.slice(0, 10)) {
-        const pName = t.payee_name || t.imported_payee || payeeMap[t.payee] || '';
+        const pName = t.payee_name || t.imported_payee || (t.payee ? payeeMap[t.payee] : '') || '';
         console.log(`  ${t.date} | ${pName.slice(0, 25).padEnd(25)} | ${formatCurrency(t.amount)}`);
       }
       if (matches.length > 10) console.log(`  ... and ${matches.length - 10} more`);
@@ -469,8 +478,31 @@ async function handleTransactions(client: ActualClient, writer: SafeWriter, sub:
       console.log(`Categorized ${count} transactions as "${categoryName}".`);
       break;
     }
+    case 'refund': {
+      const res = await transactions.markRefund(client, writer, requireFlag(flags, 'id'));
+      if (isJson(flags)) return printJson(res);
+      console.log(`Marked ${res.id} as refunded. Its amount is now 0; the original is kept in the note.`);
+      break;
+    }
+    case 'unrefund': {
+      const res = await transactions.undoRefund(client, writer, requireFlag(flags, 'id'));
+      if (isJson(flags)) return printJson(res);
+      console.log(`Restored ${res.id} to ${formatCurrency(res.amount)}.`);
+      break;
+    }
+    case 'refunds': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const rows = await transactions.listRefunds(client, {
+        account: accountId,
+        start: getFlag(flags, 'start'),
+        end: getFlag(flags, 'end'),
+      });
+      if (isJson(flags)) return printJson(rows);
+      return ui.printRefunds(rows);
+    }
     default:
-      throw new Error(`Unknown transactions subcommand: ${sub}. Use: list, add, import, update, delete, split, transfer, batch-update, batch-add, batch-categorize`);
+      throw new Error(`Unknown transactions subcommand: ${sub}. Use: list, add, import, update, delete, split, transfer, refund, unrefund, refunds, batch-update, batch-add, batch-categorize`);
   }
 }
 
@@ -1058,6 +1090,181 @@ async function handleQuery(client: ActualClient, sub: string, flags: Record<stri
   }
 }
 
+
+
+async function handleSplits(
+  client: ActualClient,
+  writer: SafeWriter,
+  sub: string,
+  flags: Record<string, string>
+) {
+  const list = (name: string): string[] =>
+    (getFlag(flags, name) || '').split(',').map(v => v.trim()).filter(Boolean);
+
+  switch (sub) {
+    case 'list': {
+      const groups = await splits.listSplitGroups(client, {
+        person: getFlag(flags, 'person'),
+        openOnly: flags.open === 'true',
+        start: getFlag(flags, 'start'),
+        end: getFlag(flags, 'end'),
+      });
+      if (isJson(flags)) return printJson(groups);
+      return ui.printSplitGroups(groups);
+    }
+    case 'balances': {
+      const balances = await splits.getReceivables(client, {
+        start: getFlag(flags, 'start'),
+        end: getFlag(flags, 'end'),
+      });
+      if (isJson(flags)) return printJson(balances);
+      return ui.printReceivables(balances);
+    }
+    case 'create': {
+      const mode = (getFlag(flags, 'mode') || 'equal') as splits.SplitMode;
+      const rawValues = list('values').map(parseFloat);
+      const group = await splits.createSplit(client, writer, {
+        transactionId: requireFlag(flags, 'transaction'),
+        people: list('people'),
+        mode,
+        // `exact` is an amount, so it arrives in major units like every other
+        // amount flag; percent and shares are unitless.
+        values: rawValues.length
+          ? (mode === 'exact' ? rawValues.map(amountToCents) : rawValues)
+          : undefined,
+        includeSelf: flags['include-self'] === 'true',
+      });
+      if (isJson(flags)) return printJson(group);
+      return ui.printSplitGroups([group]);
+    }
+    case 'settle': {
+      const group = await splits.settleSplit(
+        client, writer,
+        requireFlag(flags, 'gid'),
+        requireFlag(flags, 'person'),
+        getFlag(flags, 'transaction')
+      );
+      if (isJson(flags)) return printJson(group);
+      return ui.printSplitGroups([group]);
+    }
+    case 'reopen': {
+      const group = await splits.reopenSplit(
+        client, writer, requireFlag(flags, 'gid'), requireFlag(flags, 'person')
+      );
+      if (isJson(flags)) return printJson(group);
+      return ui.printSplitGroups([group]);
+    }
+    case 'remove': {
+      const removed = await splits.removePerson(
+        client, writer, requireFlag(flags, 'gid'), requireFlag(flags, 'person')
+      );
+      if (isJson(flags)) return printJson(removed);
+      console.log(`Removed ${removed.person} from split ${removed.gid}.`);
+      return;
+    }
+    case 'delete': {
+      const removed = await splits.deleteSplit(client, writer, requireFlag(flags, 'gid'));
+      if (isJson(flags)) return printJson(removed);
+      console.log(
+        `Deleted split ${removed.gid} across ${removed.transactions} transaction(s). ` +
+        `The transactions themselves were not changed.`
+      );
+      return;
+    }
+    default:
+      throw new Error(
+        `Unknown splits subcommand: ${sub}. Use: list, balances, create, settle, reopen, remove, delete`
+      );
+  }
+}
+
+async function handleGoals(
+  client: ActualClient,
+  writer: SafeWriter,
+  sub: string,
+  flags: Record<string, string>
+) {
+  const goalRef = () => requireFlag(flags, 'goal');
+
+  switch (sub) {
+    case 'list': {
+      const list = await goals.listGoals(client, {
+        includeArchived: flags.archived === 'true',
+      });
+      if (isJson(flags)) return printJson(list);
+      return ui.printGoals(list);
+    }
+    case 'show': {
+      const goal = await goals.getGoal(client, goalRef());
+      if (isJson(flags)) return printJson(goal);
+      return ui.printGoalDetail(goal);
+    }
+    case 'create': {
+      const goal = await goals.createGoal(client, writer, {
+        account: requireFlag(flags, 'account'),
+        name: getFlag(flags, 'name'),
+        target: amountToCents(parseFloat(requireFlag(flags, 'target'))),
+        deadline: getFlag(flags, 'deadline') ?? null,
+        behavior: getFlag(flags, 'behavior') as any,
+        color: getFlag(flags, 'color'),
+        icon: getFlag(flags, 'icon'),
+        current: flags.current === 'true',
+      });
+      if (isJson(flags)) return printJson(goal);
+      return ui.printGoalDetail(goal);
+    }
+    case 'update': {
+      const target = getFlag(flags, 'target');
+      const deadline = getFlag(flags, 'deadline');
+      const goal = await goals.updateGoal(client, writer, goalRef(), {
+        name: getFlag(flags, 'name'),
+        target: target !== undefined ? amountToCents(parseFloat(target)) : undefined,
+        // `--deadline=` with an empty value clears it.
+        deadline: deadline === undefined ? undefined : (deadline || null),
+        behavior: getFlag(flags, 'behavior') as any,
+        color: getFlag(flags, 'color'),
+        icon: getFlag(flags, 'icon'),
+      });
+      if (isJson(flags)) return printJson(goal);
+      return ui.printGoalDetail(goal);
+    }
+    case 'contribute': {
+      const amount = amountToCents(parseFloat(requireFlag(flags, 'amount')));
+      const goal = await goals.contributeToGoal(client, writer, goalRef(), amount);
+      if (isJson(flags)) return printJson(goal);
+      return ui.printGoalDetail(goal);
+    }
+    case 'current': {
+      const clear = flags.clear === 'true';
+      const goal = await goals.setCurrentGoal(client, writer, clear ? null : goalRef());
+      if (isJson(flags)) return printJson(goal);
+      if (!goal) { console.log('Current goal cleared.'); return; }
+      return ui.printGoalDetail(goal);
+    }
+    case 'archive': {
+      const goal = await goals.archiveGoal(client, writer, goalRef());
+      if (isJson(flags)) return printJson(goal);
+      console.log(`Archived goal: ${goal.goalName}`);
+      return;
+    }
+    case 'reopen': {
+      const goal = await goals.reopenGoal(client, writer, goalRef());
+      if (isJson(flags)) return printJson(goal);
+      return ui.printGoalDetail(goal);
+    }
+    case 'delete': {
+      const removed = await goals.deleteGoal(client, writer, goalRef());
+      if (isJson(flags)) return printJson(removed);
+      console.log(`Removed goal "${removed.goalName}". The account was left untouched.`);
+      return;
+    }
+    default:
+      throw new Error(
+        `Unknown goals subcommand: ${sub}. Use: list, show, create, update, contribute, current, archive, reopen, delete`
+      );
+  }
+}
+
 async function handlePortfolio(client: ActualClient, sub: string, flags: Record<string, string>) {
   switch (sub) {
     case 'list': {
@@ -1188,11 +1395,99 @@ export async function executeParsedCommand(
     case 'budgets': await handleBudgets(client, writer, subcommand, flags); break;
     case 'query': await handleQuery(client, subcommand, flags, positional); break;
     case 'portfolio': await handlePortfolio(client, subcommand, flags); break;
+    case 'goals': await handleGoals(client, writer, subcommand, flags); break;
+    case 'splits': await handleSplits(client, writer, subcommand, flags); break;
     default: console.error(`Unknown command: ${command}`); printHelp();
   }
 }
 
 // ── Main ──────────────────────────────────────────────────────
+
+/**
+ * `arc update` — check for, and install, a newer published build.
+ *
+ * Deliberately delegates the install itself to the published `install.sh`
+ * rather than reimplementing any of it here. That script is already the
+ * single source of truth for where the app lives, how the launcher is
+ * generated, how native modules are rebuilt on Node ABI drift, and which
+ * agent skill directories get refreshed. A second implementation would drift
+ * from it immediately.
+ *
+ * Config is untouched: the installer only replaces `~/.arc-cli/app`, while
+ * credentials live in `~/.arc-cli/config.json`.
+ */
+async function handleUpdate(flags: Record<string, string>): Promise<void> {
+  const checkOnly = flags.check === 'true';
+  const local = getLocalVersion();
+  const remote = await fetchPublishedVersion();
+  const status = compareVersions(local, remote);
+
+  if (isJson(flags)) {
+    printJson({ state: status.state, local: status.local, remote: status.remote });
+    if (status.state === 'behind' && !checkOnly) await runInstaller();
+    return;
+  }
+
+  console.log(`Installed: ${formatVersion(local)}`);
+
+  switch (status.state) {
+    case 'unreachable':
+      console.log('Could not reach GitHub to check for updates.');
+      console.log(`Update manually: curl -fsSL ${INSTALLER_URL} | bash`);
+      return;
+
+    case 'current':
+      console.log('Already up to date.');
+      return;
+
+    case 'unknown-local':
+      console.log(`Published: ${formatVersion(status.remote)}`);
+      console.log(
+        'This build carries no version stamp, so it is probably a source checkout.'
+      );
+      if (checkOnly) return;
+      console.log('Installing the published build over it.');
+      await runInstaller();
+      return;
+
+    case 'behind':
+      console.log(`Published: ${formatVersion(status.remote)}`);
+      if (checkOnly) {
+        console.log('An update is available. Run `arc update` to install it.');
+        return;
+      }
+      await runInstaller();
+      return;
+  }
+}
+
+/** Pipe the published installer through bash, streaming its output. */
+async function runInstaller(): Promise<void> {
+  const { spawn } = await import('node:child_process');
+  console.log('Updating…');
+
+  const res = await fetch(INSTALLER_URL, { cache: 'no-store' } as RequestInit);
+  if (!res.ok) {
+    throw new Error(
+      `Could not download the installer (HTTP ${res.status}). ` +
+      `Update manually: curl -fsSL ${INSTALLER_URL} | bash`
+    );
+  }
+  const script = await res.text();
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('bash', ['-s'], { stdio: ['pipe', 'inherit', 'inherit'] });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`Installer exited with code ${code}`));
+    });
+    child.stdin.write(script);
+    child.stdin.end();
+  });
+
+  console.log('Update complete. Restart any running `arc mcp` servers to pick it up.');
+}
 
 export async function main(
   argv: string[] = process.argv,
@@ -1202,6 +1497,18 @@ export async function main(
   const { command, subcommand, flags, positional } = parseArgs(argv);
 
   if (command === 'help' || flags.help === 'true') { printHelp(); return; }
+
+  if (command === 'version' || flags.version === 'true') {
+    const local = getLocalVersion();
+    if (isJson(flags)) return printJson(local ?? { version: 'dev' });
+    console.log(formatVersion(local));
+    return;
+  }
+
+  if (command === 'update') {
+    await handleUpdate(flags);
+    return;
+  }
 
   if (command === 'backup') {
     const backup = new BackupManager();

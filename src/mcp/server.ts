@@ -52,6 +52,8 @@ import * as budgetOps from '../operations/budgets.js';
 import * as queryOps from '../operations/queries.js';
 import * as tagOps from '../operations/tags.js';
 import * as portfolioOps from '../operations/portfolio.js';
+import * as goalOps from '../operations/goals.js';
+import * as splitOps from '../operations/splits.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -561,6 +563,78 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   },
   arc_portfolio_summary: async ({ client }) => portfolioOps.getSummary(client),
   arc_portfolio_accounts: async ({ client }) => portfolioOps.getPortfolioAccounts(client),
+
+  // goals (savings goals stored as `#goal:` account-note tags) ────────────────
+  arc_goals_list: async ({ client }, { archived }) =>
+    goalOps.listGoals(client, { includeArchived: !!archived }),
+  arc_goals_show: async ({ client }, { goal }) => goalOps.getGoal(client, goal),
+  arc_goals_create: async ({ client, writer }, args) =>
+    goalOps.createGoal(client, writer, {
+      account: args.account,
+      name: args.name,
+      target: dollarsToCents(args.target)!,
+      deadline: args.deadline ?? null,
+      behavior: args.behavior,
+      color: args.color,
+      icon: args.icon,
+      current: args.current,
+    }),
+  arc_goals_update: async ({ client, writer }, args) =>
+    goalOps.updateGoal(client, writer, args.goal, {
+      name: args.name,
+      target: dollarsToCents(args.target),
+      // An explicit empty string clears the deadline; absent leaves it alone.
+      deadline: args.deadline === undefined ? undefined : (args.deadline || null),
+      behavior: args.behavior,
+      color: args.color,
+      icon: args.icon,
+    }),
+  arc_goals_contribute: async ({ client, writer }, { goal, amount }) =>
+    goalOps.contributeToGoal(client, writer, goal, dollarsToCents(amount)!),
+  arc_goals_current: async ({ client, writer }, { goal, clear }) =>
+    goalOps.setCurrentGoal(client, writer, clear ? null : goal),
+  arc_goals_archive: async ({ client, writer }, { goal }) =>
+    goalOps.archiveGoal(client, writer, goal),
+  arc_goals_reopen: async ({ client, writer }, { goal }) =>
+    goalOps.reopenGoal(client, writer, goal),
+  arc_goals_delete: async ({ client, writer }, { goal }) =>
+    goalOps.deleteGoal(client, writer, goal),
+
+  // splits (group splits stored as `#gsplit|` transaction-note tokens) ────────
+  arc_splits_list: async ({ client }, { person, open, start, end }) =>
+    splitOps.listSplitGroups(client, { person, openOnly: !!open, start, end }),
+  arc_splits_balances: async ({ client }, { start, end }) =>
+    splitOps.getReceivables(client, { start, end }),
+  arc_splits_create: async ({ client, writer }, args) =>
+    splitOps.createSplit(client, writer, {
+      transactionId: args.transaction,
+      people: args.people,
+      mode: args.mode,
+      // `exact` values arrive in major units like every other amount input.
+      values: args.mode === 'exact' && args.values
+        ? args.values.map((v: number) => dollarsToCents(v)!)
+        : args.values,
+      includeSelf: args.include_self,
+    }),
+  arc_splits_settle: async ({ client, writer }, { gid, person, transaction }) =>
+    splitOps.settleSplit(client, writer, gid, person, transaction),
+  arc_splits_reopen: async ({ client, writer }, { gid, person }) =>
+    splitOps.reopenSplit(client, writer, gid, person),
+  arc_splits_remove: async ({ client, writer }, { gid, person }) =>
+    splitOps.removePerson(client, writer, gid, person),
+  arc_splits_delete: async ({ client, writer }, { gid }) =>
+    splitOps.deleteSplit(client, writer, gid),
+
+  // transactions: refunds ────────────────────────────────────────────────────
+  arc_transactions_refund: async ({ client, writer }, { id }) =>
+    transactionOps.markRefund(client, writer, id),
+  arc_transactions_unrefund: async ({ client, writer }, { id }) =>
+    transactionOps.undoRefund(client, writer, id),
+  arc_transactions_refunds: async ({ client }, { account, start, end }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return transactionOps.listRefunds(client, { account: accountId, start, end });
+  },
 };
 
 // ── Introspection ───────────────────────────────────────────────────────────
@@ -571,10 +645,29 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
  * handlers currently wired in `OPERATION_HANDLERS`, so tests can use it as
  * a drift guard.
  */
-export async function listRegisteredToolNames(): Promise<string[]> {
-  return PUBLIC_OPERATIONS
-    .filter(op => op.mcpTool in OPERATION_HANDLERS)
-    .map(op => op.mcpTool);
+export async function listRegisteredToolNames(
+  exposure: McpExposure = resolveExposure()
+): Promise<string[]> {
+  return enumerateRegisteredOperations(exposure).map(({ op }) => op.mcpTool);
+}
+
+/**
+ * Which tier of the registry an MCP server exposes.
+ *
+ * `all` (the default) registers every wired operation. `default` registers
+ * only `defaultExposure: "default"` operations, dropping the batch,
+ * destructive and global-state ones.
+ *
+ * The default is deliberately `all`: the advanced tier currently includes
+ * `arc_budgets_switch` and `arc_query_custom`, which are load-bearing for
+ * multi-budget and escape-hatch workflows. Hiding them by default would
+ * silently regress existing agents. Operators who would rather trade reach
+ * for a smaller tool surface can opt in.
+ */
+export type McpExposure = 'default' | 'all';
+
+export function resolveExposure(env: NodeJS.ProcessEnv = process.env): McpExposure {
+  return env.ARC_MCP_EXPOSURE === 'default' ? 'default' : 'all';
 }
 
 /**
@@ -588,6 +681,8 @@ const AMOUNT_BEARING_GROUPS = new Set<PublicOperation['group']>([
   'budgets',
   'query',
   'portfolio',
+  'goals',
+  'splits',
 ]);
 
 const AMOUNT_REMINDER =
@@ -599,7 +694,9 @@ function decorateDescription(op: PublicOperation): string {
 }
 
 /** The operations that will be registered, paired with their handlers. */
-export function enumerateRegisteredOperations(): Array<{
+export function enumerateRegisteredOperations(
+  exposure: McpExposure = resolveExposure()
+): Array<{
   op: PublicOperation;
   handler: McpOperationHandler;
 }> {
@@ -607,6 +704,7 @@ export function enumerateRegisteredOperations(): Array<{
   for (const op of PUBLIC_OPERATIONS) {
     const handler = OPERATION_HANDLERS[op.mcpTool];
     if (!handler) continue;
+    if (exposure === 'default' && op.defaultExposure !== 'default') continue;
     result.push({ op, handler });
   }
   return result;
@@ -615,6 +713,11 @@ export function enumerateRegisteredOperations(): Array<{
 // ── Server factory ──────────────────────────────────────────────────────────
 
 export interface CreateMcpServerOptions {
+  /**
+   * Which registry tier to register. Defaults to `ARC_MCP_EXPOSURE`, which
+   * itself defaults to `all`. See `McpExposure`.
+   */
+  exposure?: McpExposure;
   /** Dep-injection hook used by tests. */
   client?: ActualClient;
   writer?: SafeWriter;
@@ -752,7 +855,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
     return withRealClient();
   };
 
-  for (const { op, handler } of enumerateRegisteredOperations()) {
+  for (const { op, handler } of enumerateRegisteredOperations(options.exposure)) {
     // Suffix the description of any tool that returns amount-bearing data
     // with a compact minor-units reminder. MCP clients that do not load
     // SKILL.md (like Claude Desktop) read the per-tool description when

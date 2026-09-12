@@ -13,10 +13,39 @@ import {
 } from './credential-store.js';
 import type { ActualConfig, BudgetContext, BudgetFile, SessionState, SwitchBudgetOptions } from './types.js';
 
+/**
+ * `@actual-app/api`'s published typings declare `getTransactions(accountId,
+ * startDate, endDate)` with all three arguments required. The implementation
+ * disagrees: `api/transactions-get` assembles its filter with
+ * `[accountId && ..., startDate && ..., endDate && ...].filter(Boolean)`, so
+ * omitting the dates simply omits the date constraints and returns the whole
+ * account history.
+ *
+ * Correcting the signature in one place beats the alternatives — passing
+ * sentinel dates would change behaviour, and `as any` at each of the sixteen
+ * call sites would throw away type-checking on the rest of the surface.
+ */
+type ActualApiModule = Omit<typeof actualApi, 'getTransactions'> & {
+  getTransactions(
+    accountId: string,
+    startDate?: string,
+    endDate?: string
+  ): ReturnType<typeof actualApi.getTransactions>;
+};
+
+type ActualLib = Awaited<ReturnType<typeof actualApi.init>>;
+
 export class ActualClient {
   private config: ActualConfig;
   private state: SessionState;
   private sessionDataDir: string | null = null;
+  /**
+   * The handle `actualApi.init()` returns. It carries `send()`, the typed
+   * gateway to Actual's server handlers, which is the only supported way to
+   * write the `notes` table (`notes-save`). The module-level `internal`
+   * export reaches the same object but is marked @deprecated in the typings.
+   */
+  private lib: ActualLib | null = null;
   private localBudgetId: string | null = null;
   private budgetContext: BudgetContext | null = null;
   private pendingBudgetPassword?: string;
@@ -125,6 +154,7 @@ export class ActualClient {
     }
 
     this.initialized = false;
+    this.lib = null;
     this.state.connected = false;
     this.state.synced = false;
     this.sessionDataDir = null;
@@ -256,7 +286,7 @@ export class ActualClient {
   async init(): Promise<void> {
     if (this.initialized) return;
     const sessionDataDir = this.ensureSessionDataDir();
-    await actualApi.init({
+    this.lib = await actualApi.init({
       serverURL: this.config.serverURL,
       password: this.config.password,
       dataDir: sessionDataDir,
@@ -511,6 +541,7 @@ export class ActualClient {
     this.sessionDataDir = null;
     this.localBudgetId = null;
     this.initialized = false;
+    this.lib = null;
     console.error('[Client] Disconnected');
   }
 
@@ -603,14 +634,33 @@ export class ActualClient {
     this.state.backedUp = true;
   }
 
-  get api() {
-    return actualApi;
+  get api(): ActualApiModule {
+    return actualApi as unknown as ActualApiModule;
+  }
+
+  /**
+   * Actual's server-handler gateway. Needed for operations the public API
+   * module does not expose — notably `notes-save`, which is how account,
+   * category and budget-month notes are written.
+   */
+  get internals(): ActualLib {
+    if (!this.lib) {
+      throw new Error('Actual API not initialized. Call connect() first.');
+    }
+    return this.lib;
   }
 }
 
+/**
+ * `readline.Interface` keeps `output` off its public type even though the
+ * instance carries the stream it was constructed with, and the masking logic
+ * below needs to write to it directly to emit the newline the muted prompt
+ * swallowed.
+ */
 type MaskableInterface = readline.Interface & {
   _writeToOutput?: (chunk: string) => void;
   stdoutMuted?: boolean;
+  output: NodeJS.WritableStream;
 };
 
 export function maskReadlineOutput(rl: MaskableInterface): void {
@@ -630,7 +680,7 @@ export function maskReadlineOutput(rl: MaskableInterface): void {
 export function createMaskedInterface(
   input: NodeJS.ReadableStream = process.stdin,
   output: NodeJS.WritableStream = process.stdout
-): readline.Interface {
+): MaskableInterface {
   const rl = readline.createInterface({
     input,
     output,

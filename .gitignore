@@ -1,1 +1,8 @@
 node_modules/
+
+# Local tooling artifacts. These land in the public checkout because it is a
+# working directory too, but none of them belong in the published repo.
+.claude/
+CLAUDE.md
+AGENTS.md
+graphify-out/

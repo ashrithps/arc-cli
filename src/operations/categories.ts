@@ -123,7 +123,12 @@ export async function updateCategoryGroup(
 
   const result = await writer.write(
     `Update category group: ${id}`,
-    () => client.api.updateCategoryGroup(id, fields)
+    // CategoryGroup is the CLI's input shape; it differs from Actual's
+    // generated APICategoryGroupEntity in the nested category type only.
+    () => client.api.updateCategoryGroup(
+      id,
+      fields as Parameters<typeof client.api.updateCategoryGroup>[1]
+    )
   );
 
   if (!result.success) throw new Error(result.error);

@@ -115,6 +115,49 @@ Use `native.amount` and `native.cleanNotes` when displaying transactions from a 
 
 **Never extrapolate** one account's currency to another or to the budget as a whole. Each account stands alone. Only emit a currency symbol next to a number when that specific number came from an account with a known currency.
 
+## Note-Backed Features (goals, splits, refunds, portfolio)
+
+Several arc features do not live in their own Actual tables. They are stored as
+structured tokens inside **note bodies** — account notes, transaction notes — so
+they ride Actual's file sync and survive a device restore. The arc mobile app
+reads and writes the same tokens, so these surfaces agree across both.
+
+Two consequences worth knowing when driving Arc:
+
+- **A single note can carry several features at once.** An account note might
+  hold a `#goal:` tag, a `#debt|` tag and the user's own prose together. Arc's
+  write path merges rather than replaces, so foreign content survives. Do not
+  hand-edit note bodies through `transactions update --notes` on a transaction
+  that carries split or refund tokens — you will drop them. Use the dedicated
+  commands.
+- **Splits and refunds change what the numbers mean.** A refunded transaction
+  genuinely has amount 0, so spending totals are already correct without
+  special handling. A split transaction, by contrast, still holds its full
+  amount — `arc splits balances` tells you how much of it somebody else owes.
+
+### Goals
+
+A goal is an ordinary account with a `#goal:` tag on its note. Two behaviors:
+`have_balance` measures progress by the account's live balance, `set_aside`
+tracks contributions recorded explicitly with `arc goals contribute`.
+Contributing to a `have_balance` goal is refused — add a transaction to the
+account instead.
+
+### Group splits
+
+`arc splits create` records what other people owe on a transaction. No money
+moves: balances, registers and reconciliation are untouched. Four modes —
+`equal`, `percent`, `exact`, `shares` — and `--include-self` decides whether an
+equal split is n ways or n+1. `arc splits balances` is the "who owes me" view.
+
+### Refunds
+
+`arc transactions refund` zeroes a transaction and records what it was, so the
+row stays visible and struck through instead of being deleted or offset by a
+fake income row. It refuses transfers, splits and reconciled rows, and says
+which applies. `arc transactions unrefund` restores the original amount *and*
+its direction.
+
 ## Multi-Budget Behavior
 
 - `arc budgets list` discovers every budget file on the configured Actual server.
@@ -424,6 +467,37 @@ arc transactions split --account 'Card' --date 2026-04-01 --payee 'Costco' --sub
 
 ```bash
 arc transactions transfer --from 'Checking' --to 'Savings' --amount 500 --date 2026-04-10
+```
+
+### `arc transactions refund`
+
+- mode: **write**
+- mcp tool: `arc_transactions_refund`
+- Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows.
+
+```bash
+arc transactions refund --id <transaction-id>
+```
+
+### `arc transactions unrefund`
+
+- mode: **write**
+- mcp tool: `arc_transactions_unrefund`
+- Undo a refund, restoring the original amount, its direction (expense or income), and the note.
+
+```bash
+arc transactions unrefund --id <transaction-id>
+```
+
+### `arc transactions refunds`
+
+- mode: **read**
+- mcp tool: `arc_transactions_refunds`
+- List refunded transactions with the original amount recovered from the refund token, and when each was marked.
+
+```bash
+arc transactions refunds
+arc transactions refunds --start 2026-01-01 --json
 ```
 
 ### `arc transactions batch-update`
@@ -1035,6 +1109,183 @@ arc portfolio summary --json
 ```bash
 arc portfolio accounts
 arc portfolio accounts --json
+```
+
+## Goals
+
+Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.
+
+### `arc goals list`
+
+- mode: **read**
+- mcp tool: `arc_goals_list`
+- List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue).
+
+```bash
+arc goals list
+arc goals list --archived --json
+```
+
+### `arc goals show`
+
+- mode: **read**
+- mcp tool: `arc_goals_show`
+- Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track.
+
+```bash
+arc goals show --goal 'Japan trip'
+arc goals show --goal 'Japan trip' --json
+```
+
+### `arc goals create`
+
+- mode: **write**
+- mcp tool: `arc_goals_create`
+- Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too.
+
+```bash
+arc goals create --account 'Savings' --target 5000 --deadline 2027-03-01
+arc goals create --account 'Savings' --name 'Japan trip' --target 5000 --behavior set_aside
+```
+
+### `arc goals update`
+
+- mode: **write**
+- mcp tool: `arc_goals_update`
+- Change a goal's name, target, deadline, behavior, color, or icon.
+
+```bash
+arc goals update --goal 'Japan trip' --target 6000
+arc goals update --goal 'Japan trip' --deadline 2027-06-01
+```
+
+### `arc goals contribute`
+
+- mode: **write**
+- mcp tool: `arc_goals_contribute`
+- Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead.
+
+```bash
+arc goals contribute --goal 'Japan trip' --amount 250
+```
+
+### `arc goals current`
+
+- mode: **write**
+- mcp tool: `arc_goals_current`
+- Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time.
+
+```bash
+arc goals current --goal 'Japan trip'
+arc goals current --clear
+```
+
+### `arc goals archive`
+
+- mode: **write**
+- mcp tool: `arc_goals_archive`
+- Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight.
+
+```bash
+arc goals archive --goal 'Japan trip'
+```
+
+### `arc goals reopen`
+
+- mode: **write**
+- mcp tool: `arc_goals_reopen`
+- Un-archive a goal.
+
+```bash
+arc goals reopen --goal 'Japan trip'
+```
+
+### `arc goals delete`
+
+- mode: **write** (advanced)
+- mcp tool: `arc_goals_delete`
+- Remove the goal overlay from an account. The account, its balance and its transactions are left untouched.
+
+```bash
+arc goals delete --goal 'Japan trip'
+```
+
+## Group Splits
+
+Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
+
+### `arc splits list`
+
+- mode: **read**
+- mcp tool: `arc_splits_list`
+- List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled.
+
+```bash
+arc splits list
+arc splits list --person Sam --open --json
+```
+
+### `arc splits balances`
+
+- mode: **read**
+- mcp tool: `arc_splits_balances`
+- Who owes you what. Totals each person's outstanding and already-settled amounts across every split.
+
+```bash
+arc splits balances
+arc splits balances --json
+```
+
+### `arc splits create`
+
+- mode: **write**
+- mcp tool: `arc_splits_create`
+- Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money.
+
+```bash
+arc splits create --transaction <id> --people 'Sam,Kim' --mode equal --include-self
+arc splits create --transaction <id> --people 'Sam,Kim' --mode percent --values '60,40'
+```
+
+### `arc splits settle`
+
+- mode: **write**
+- mcp tool: `arc_splits_settle`
+- Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income.
+
+```bash
+arc splits settle --gid ab12cd --person Sam
+arc splits settle --gid ab12cd --person Sam --transaction <repayment-id>
+```
+
+### `arc splits reopen`
+
+- mode: **write**
+- mcp tool: `arc_splits_reopen`
+- Flip a settled share back to open.
+
+```bash
+arc splits reopen --gid ab12cd --person Sam
+```
+
+### `arc splits remove`
+
+- mode: **write**
+- mcp tool: `arc_splits_remove`
+- Drop one person from a split, leaving everyone else in it.
+
+```bash
+arc splits remove --gid ab12cd --person Sam
+```
+
+### `arc splits delete`
+
+- mode: **write** (advanced)
+- mcp tool: `arc_splits_delete`
+- Delete an entire split group across every transaction carrying it. The transactions themselves are untouched.
+
+```bash
+arc splits delete --gid ab12cd
 ```
 
 ## MCP Parity

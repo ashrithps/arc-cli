@@ -93,6 +93,70 @@ need_cmd() {
   fi
 }
 
+resolve_command_path() {
+  local cmd_path="$1"
+  if [[ -e "${cmd_path}" ]] && command -v realpath >/dev/null 2>&1; then
+    realpath "${cmd_path}"
+  else
+    printf '%s\n' "${cmd_path}"
+  fi
+}
+
+write_arc_launcher() {
+  local launcher="$1"
+  local app_dir="$2"
+  rm -f "${launcher}"
+  cat > "${launcher}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="${app_dir}"
+NODE_FILE="\${APP_DIR}/.arc-runtime-node"
+ABI_FILE="\${APP_DIR}/.arc-runtime-abi"
+ENTRYPOINT="\${APP_DIR}/bin/arc.js"
+
+NODE_BIN=""
+if [[ -f "\${NODE_FILE}" ]]; then
+  CANDIDATE="\$(cat "\${NODE_FILE}")"
+  if [[ -x "\${CANDIDATE}" ]]; then
+    NODE_BIN="\${CANDIDATE}"
+  fi
+fi
+
+if [[ -z "\${NODE_BIN}" ]]; then
+  if ! command -v node >/dev/null 2>&1; then
+    echo "arc: node runtime not found. Reinstall arc or install Node 18+." >&2
+    exit 127
+  fi
+  NODE_BIN="\$(command -v node)"
+  if command -v realpath >/dev/null 2>&1; then
+    NODE_BIN="\$(realpath "\${NODE_BIN}")"
+  fi
+fi
+
+CURRENT_ABI="\$("\${NODE_BIN}" -p 'process.versions.modules' 2>/dev/null || true)"
+INSTALLED_ABI=""
+if [[ -f "\${ABI_FILE}" ]]; then
+  INSTALLED_ABI="\$(cat "\${ABI_FILE}")"
+fi
+
+if [[ -n "\${CURRENT_ABI}" && -n "\${INSTALLED_ABI}" && "\${CURRENT_ABI}" != "\${INSTALLED_ABI}" ]]; then
+  LOG_FILE="\${TMPDIR:-/tmp}/arc-npm-rebuild.log"
+  echo "arc: Node ABI changed from \${INSTALLED_ABI} to \${CURRENT_ABI}; rebuilding native dependencies..." >&2
+  if ! (cd "\${APP_DIR}" && npm rebuild better-sqlite3 >"\${LOG_FILE}" 2>&1); then
+    echo "arc: native dependency rebuild failed. See \${LOG_FILE}" >&2
+    cat "\${LOG_FILE}" >&2
+    exit 1
+  fi
+  printf '%s\n' "\${CURRENT_ABI}" > "\${ABI_FILE}"
+  printf '%s\n' "\${NODE_BIN}" > "\${NODE_FILE}"
+fi
+
+exec "\${NODE_BIN}" "\${ENTRYPOINT}" "\$@"
+EOF
+  chmod +x "${launcher}"
+}
+
 SKILL_INSTALLED=""
 
 # install_skill DEST_DIR LABEL
@@ -800,10 +864,9 @@ EOF
 # merge_claude_desktop_mcp ARC_BIN
 #   Adds an `arc` entry under mcpServers without dropping existing entries.
 #
-#   Uses the absolute path to the current `node` binary plus the arc.js entry
-#   point (not the shebang-bearing `arc` launcher) so that Claude Desktop —
-#   which spawns MCP child processes with a minimal PATH that typically does
-#   NOT include nvm/mise/asdf-managed node — can still resolve the runtime.
+#   Uses the absolute path to the generated launcher so Claude Desktop can
+#   start arc with a minimal PATH while still benefiting from the install-time
+#   Node pin and native-module ABI rebuild guard.
 merge_claude_desktop_mcp() {
   local arc_bin="$1"
   if [ ! -d "$HOME/Library/Application Support/Claude" ]; then
@@ -811,23 +874,13 @@ merge_claude_desktop_mcp() {
     return 0
   fi
   mkdir -p "$CLAUDE_CONFIG_DIR"
-  if ! command -v node >/dev/null 2>&1; then
-    warn "node not found — skipping Claude Desktop MCP merge"
-    return 0
-  fi
-  local node_bin arc_entry
-  node_bin="$(command -v node)"
-  # Resolve to the real path so nvm/mise shims don't reappear and break the
-  # absolute-path guarantee on the Claude Desktop spawn side.
-  if command -v realpath >/dev/null 2>&1; then
-    node_bin="$(realpath "${node_bin}")"
-  fi
-  arc_entry="${APP_DIR}/bin/arc.js"
-  node - "$CLAUDE_CONFIG_PATH" "$node_bin" "$arc_entry" <<'NODE'
+  local arc_launcher
+  arc_launcher="$(resolve_command_path "${arc_bin}")"
+  node - "$CLAUDE_CONFIG_PATH" "$arc_launcher" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
-const [configPath, nodeBin, arcEntry] = process.argv.slice(2);
+const [configPath, arcLauncher] = process.argv.slice(2);
 let config = {};
 if (fs.existsSync(configPath)) {
   try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { config = {}; }
@@ -835,7 +888,7 @@ if (fs.existsSync(configPath)) {
 if (!config.mcpServers || typeof config.mcpServers !== 'object') {
   config.mcpServers = {};
 }
-config.mcpServers.arc = { command: nodeBin, args: [arcEntry, 'mcp'] };
+config.mcpServers.arc = { command: arcLauncher, args: ['mcp'] };
 fs.mkdirSync(path.dirname(configPath), { recursive: true });
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 NODE
@@ -869,7 +922,8 @@ banner_top
 
 section "Preflight"
 need_cmd node
-NODE_VERSION="$(node --version)"
+NODE_BIN="$(resolve_command_path "$(command -v node)")"
+NODE_VERSION="$("${NODE_BIN}" --version)"
 NODE_MAJOR="$(printf '%s' "${NODE_VERSION}" | sed -E 's/^v([0-9]+)\..*/\1/')"
 if [[ "${NODE_MAJOR}" -lt 18 ]]; then
   fail "Arc requires Node 18 or newer. Detected ${NODE_VERSION}."
@@ -926,8 +980,10 @@ fi
 rm -f "${NPM_LOG}"
 ok "dependencies installed"
 
+printf '%s\n' "${NODE_BIN}" > "${APP_DIR}/.arc-runtime-node"
+printf '%s\n' "$("${NODE_BIN}" -p 'process.versions.modules')" > "${APP_DIR}/.arc-runtime-abi"
 chmod +x "${APP_DIR}/bin/arc.js"
-ln -snf "${APP_DIR}/bin/arc.js" "${BIN_DIR}/arc"
+write_arc_launcher "${BIN_DIR}/arc" "${APP_DIR}"
 ok "launcher at ${BIN_DIR}/arc"
 
 # Skill file ships inside the installed app snapshot.

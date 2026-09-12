@@ -24,7 +24,9 @@ export type PublicOperationGroup =
   | "schedules"
   | "budgets"
   | "query"
-  | "portfolio";
+  | "portfolio"
+  | "goals"
+  | "splits";
 
 export type PublicOperationMode = "read" | "write";
 

@@ -3,6 +3,7 @@ import type { SafeWriter } from '../safe-writer.js';
 import type { Schedule } from '../types.js';
 import { validateId } from '../utils/validation.js';
 import { validateDate } from '../utils/validation.js';
+import { resolveScheduleAmountCents } from '../codecs/schedule-amount.js';
 
 export async function listSchedules(client: ActualClient): Promise<Schedule[]> {
   client.ensureConnected();
@@ -78,7 +79,14 @@ export async function postSchedule(
 
   const tx: any = {
     date: txDate,
-    amount: (schedule as any)._amount || (schedule as any).amount || 0,
+    // `_amount`/`amount` is not always a number: Actual stores JSON strings,
+    // `N:`-prefixed strings, `{ num }` wrappers, and — for `isbetween`
+    // schedules — a `{ num1, num2 }` range. Taking the raw value posted the
+    // object itself as the transaction amount.
+    amount: resolveScheduleAmountCents(
+      (schedule as any)._amount ?? (schedule as any).amount,
+      (schedule as any)._conditions ?? (schedule as any).conditions
+    ),
     payee: (schedule as any)._payee || (schedule as any).payee || undefined,
     category: (schedule as any)._category || (schedule as any).category || undefined,
     account: (schedule as any)._account || (schedule as any).account || undefined,
@@ -91,10 +99,15 @@ export async function postSchedule(
 
   const result = await writer.write(
     `Post schedule: ${(schedule as any).name || scheduleId} on ${txDate}`,
+    // `schedule` is a real column on the transactions table and
+    // `api/transactions-add` passes the rows straight through, but
+    // ImportTransactionEntity omits the field. Linking the posted
+    // transaction back to its schedule is the whole point of this call,
+    // so cast rather than drop it.
     () => client.api.addTransactions(tx.account, [{
       date: tx.date, amount: tx.amount, payee: tx.payee,
       category: tx.category, notes: tx.notes, schedule: tx.schedule, cleared: tx.cleared,
-    }])
+    } as Parameters<typeof client.api.addTransactions>[1][number]])
   );
 
   if (!result.success) throw new Error(result.error);

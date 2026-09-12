@@ -94,6 +94,8 @@ const T = {
 
 const IC = {
   logo: '◆',
+  // Shown beside encrypted budgets in the budget switcher.
+  lock: '🔒',
   connected: '●',
   disconnected: '○',
   bank: '🏦',

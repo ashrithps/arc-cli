@@ -39,6 +39,8 @@ const GROUP_ORDER: readonly PublicOperationGroup[] = [
   "budgets",
   "query",
   "portfolio",
+  "goals",
+  "splits",
 ];
 
 const GROUP_TITLES: Record<PublicOperationGroup, string> = {
@@ -52,6 +54,8 @@ const GROUP_TITLES: Record<PublicOperationGroup, string> = {
   budgets: "Budgets",
   query: "Query",
   portfolio: "Portfolio",
+  goals: "Goals",
+  splits: "Group Splits",
 };
 
 const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
@@ -69,6 +73,10 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
   query: "Read-only reports and ad-hoc Actual queries.",
   portfolio:
     "Track investment holdings and trade activity (read-only). Investment data lives in account notes (`#investment:` / `#hold:v1:`) and `#act:`-tagged transactions.",
+  goals:
+    "Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.",
+  splits:
+    "Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.",
 };
 
 function groupOperations(

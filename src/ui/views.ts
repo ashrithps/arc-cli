@@ -310,12 +310,17 @@ export function printHelp() {
   console.log(cmd('budgets', 'List/switch budgets and manage budget amounts'));
   console.log(cmd('query', 'Smart queries (spending, uncategorized)'));
   console.log(cmd('portfolio', 'Investment holdings and trade activity (read-only)'));
+  console.log(cmd('goals', 'Savings goals — progress, contributions, deadlines'));
+  console.log(cmd('splits', 'Group splits — share a cost, track who owes you'));
   console.log(cmd('backup', 'List/clean backups'));
+  console.log(cmd('update', 'Update arc to the latest published build'));
+  console.log(cmd('version', 'Show the installed build'));
   console.log('');
 
   console.log(chalk.bold.white('  Flags'));
   console.log(divider(50));
   console.log(cmd('--json', 'Machine-readable JSON output'));
+  console.log(cmd('--check', 'With `update`: report only, install nothing'));
   console.log(cmd('--budget=ID', 'Override budget sync ID'));
   console.log(cmd('--account=NAME', 'Target account (name or ID)'));
   console.log(cmd('--start=DATE', 'Start date (YYYY-MM-DD)'));
@@ -456,4 +461,151 @@ export function printError(msg: string) {
 
 export function printInfo(msg: string) {
   console.log(`  ${colors.primary(sym.dot)} ${colors.muted(msg)}`);
+}
+
+// ── Goals ─────────────────────────────────────────────────────
+
+const GOAL_STATUS_LABEL: Record<string, string> = {
+  completed: 'completed',
+  ahead: 'ahead',
+  on_track: 'on track',
+  behind: 'behind',
+  overdue: 'overdue',
+};
+
+function goalStatus(status: string): string {
+  const label = GOAL_STATUS_LABEL[status] ?? status;
+  switch (status) {
+    case 'completed':
+    case 'ahead':
+    case 'on_track':
+      return colors.success(label);
+    case 'behind':
+      return colors.warning(label);
+    case 'overdue':
+      return colors.error(label);
+    default:
+      return colors.muted(label);
+  }
+}
+
+/** A compact 20-cell progress bar. */
+function goalBar(pct: number): string {
+  const width = 20;
+  const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
+  return `${'█'.repeat(filled)}${colors.dim('░'.repeat(width - filled))}`;
+}
+
+export function printGoals(goals: any[]) {
+  console.log(header(`Goals (${goals.length})`));
+  if (goals.length === 0) {
+    console.log(`  ${colors.muted('No goals yet. Create one with `arc goals create --account <name> --target <amount>`.')}\n`);
+    return;
+  }
+  printTable(goals.map((g: any) => ({
+    goal: `${g.isCurrent ? sym.star + ' ' : ''}${g.goalName}`,
+    funded: formatCurrency(g.progress.fundedAmount),
+    target: formatCurrency(g.progress.targetAmount),
+    '%': `${Math.round(g.progress.percentage)}%`,
+    status: goalStatus(g.progress.status),
+    deadline: g.deadline || colors.muted('—'),
+    ...(g.isArchived ? { archived: 'yes' } : {}),
+  })));
+}
+
+export function printGoalDetail(goal: any) {
+  const p = goal.progress;
+  console.log(header(`Goal — ${goal.goalName}`));
+  console.log(row('Account', goal.accountName));
+  console.log(row('Behavior', goal.behavior === 'set_aside' ? 'set aside (tracked contributions)' : 'have a balance of'));
+  console.log('');
+  console.log(`  ${goalBar(p.percentage)}  ${Math.round(p.percentage)}%`);
+  console.log('');
+  console.log(row('Funded', formatCurrency(p.fundedAmount)));
+  console.log(row('Target', formatCurrency(p.targetAmount)));
+  console.log(row('Remaining', formatCurrency(p.remainingAmount)));
+  console.log(row('Status', goalStatus(p.status)));
+  if (goal.deadline) {
+    console.log(row('Deadline', goal.deadline));
+    if (p.daysRemaining != null) {
+      console.log(row(
+        'Time left',
+        p.daysRemaining < 0
+          ? colors.error(`${Math.abs(p.daysRemaining)} days overdue`)
+          : `${p.daysRemaining} days`
+      ));
+    }
+    if (p.monthlyAmountNeeded != null) {
+      console.log(row('Needed / month', formatCurrency(p.monthlyAmountNeeded)));
+    }
+  }
+  if (goal.isArchived) console.log(row('Archived', 'yes'));
+  if (goal.isCurrent) console.log(row('Current goal', 'yes'));
+  console.log('');
+}
+
+// ── Group splits ──────────────────────────────────────────────
+
+export function printSplitGroups(groups: any[]) {
+  console.log(header(`Group splits (${groups.length})`));
+  if (groups.length === 0) {
+    console.log(`  ${colors.muted('No splits yet. Share one with `arc splits create --transaction <id> --people ...`.')}\n`);
+    return;
+  }
+  for (const g of groups) {
+    const payee = g.payeeName || colors.muted('(no payee)');
+    console.log(
+      `  ${colors.secondary(g.gid)}  ${g.date}  ${payee}  ` +
+      `${formatCurrency(Math.abs(g.transactionAmount))}  ${colors.muted(g.accountName)}`
+    );
+    for (const p of g.people) {
+      const state = p.status === 'paid'
+        ? colors.success(`settled${p.settled ? ' ' + p.settled : ''}`)
+        : colors.warning('open');
+      console.log(
+        `      ${p.person.padEnd(16)} ${String(Math.round(p.share * 100)).padStart(3)}%  ` +
+        `${formatCurrency(p.amt).padStart(12)}  ${state}`
+      );
+    }
+    if (g.owedTotal > 0) {
+      console.log(`      ${colors.muted('still owed:')} ${formatCurrency(g.owedTotal)}`);
+    }
+    console.log('');
+  }
+}
+
+export function printReceivables(balances: any[]) {
+  console.log(header(`Receivables (${balances.length})`));
+  if (balances.length === 0) {
+    console.log(`  ${colors.muted('Nobody owes you anything.')}\n`);
+    return;
+  }
+  printTable(balances.map((b: any) => ({
+    person: b.person,
+    owes: formatCurrency(b.open),
+    settled: formatCurrency(b.paid),
+    splits: b.splitCount,
+  })));
+  const total = balances.reduce((s: number, b: any) => s + b.open, 0);
+  console.log(`\nTotal outstanding: ${formatCurrency(total)}`);
+}
+
+// ── Refunds ───────────────────────────────────────────────────
+
+export function printRefunds(rows: any[]) {
+  console.log(header(`Refunded transactions (${rows.length})`));
+  if (rows.length === 0) {
+    console.log(`  ${colors.muted('No refunded transactions in this range.')}\n`);
+    return;
+  }
+  printTable(rows.map((r: any) => ({
+    date: r.date,
+    payee: r.payee_name || '—',
+    account: r.accountName,
+    original: formatCurrency(r.originalAmount),
+    direction: r.direction,
+    refunded: r.refundedOn,
+  })));
+  const total = rows.reduce((s: number, r: any) => s + Math.abs(r.originalAmount), 0);
+  console.log(`\nTotal refunded: ${formatCurrency(total)}`);
 }

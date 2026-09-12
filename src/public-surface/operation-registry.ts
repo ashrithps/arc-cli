@@ -45,6 +45,10 @@ const amountNumber = z
   .number()
   .describe("Amount in major units (e.g. dollars). Negative for expenses.");
 
+const goalRef = z
+  .string()
+  .describe("Goal name, its account name, or the account UUID.");
+
 const jsonFlag = z
   .boolean()
   .optional()
@@ -1097,6 +1101,322 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     description: "List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.",
     examples: ["arc portfolio accounts", "arc portfolio accounts --json"],
     inputSchema: { json: jsonFlag },
+    defaultExposure: "default",
+  },
+
+  // ── goals ──────────────────────────────────────────────────────────────────
+  {
+    id: "goals.list",
+    group: "goals",
+    subcommand: "list",
+    mcpTool: "arc_goals_list",
+    mode: "read",
+    description:
+      "List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue).",
+    examples: ["arc goals list", "arc goals list --archived --json"],
+    inputSchema: {
+      archived: z
+        .boolean()
+        .optional()
+        .describe("Include archived goals. Archived goals are hidden by default."),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.show",
+    group: "goals",
+    subcommand: "show",
+    mcpTool: "arc_goals_show",
+    mode: "read",
+    description:
+      "Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track.",
+    examples: ["arc goals show --goal 'Japan trip'", "arc goals show --goal 'Japan trip' --json"],
+    inputSchema: {
+      goal: goalRef,
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.create",
+    group: "goals",
+    subcommand: "create",
+    mcpTool: "arc_goals_create",
+    mode: "write",
+    description:
+      "Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too.",
+    examples: [
+      "arc goals create --account 'Savings' --target 5000 --deadline 2027-03-01",
+      "arc goals create --account 'Savings' --name 'Japan trip' --target 5000 --behavior set_aside",
+    ],
+    inputSchema: {
+      account: accountRef,
+      name: z.string().optional().describe("Goal name. Defaults to the account name."),
+      target: amountNumber.describe("Target amount in major units (e.g. 5000 for 5,000)."),
+      deadline: dateStr.optional().describe("Target date (YYYY-MM-DD). Optional."),
+      behavior: z
+        .enum(["set_aside", "have_balance"])
+        .optional()
+        .describe(
+          "have_balance (default) measures progress by the account's live balance. set_aside tracks contributions you record explicitly."
+        ),
+      color: z.string().optional().describe("Hex color, e.g. #00D632."),
+      icon: z.string().optional().describe("Icon name, e.g. airplane."),
+      current: z.boolean().optional().describe("Spotlight this as the current goal."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.update",
+    group: "goals",
+    subcommand: "update",
+    mcpTool: "arc_goals_update",
+    mode: "write",
+    description: "Change a goal's name, target, deadline, behavior, color, or icon.",
+    examples: [
+      "arc goals update --goal 'Japan trip' --target 6000",
+      "arc goals update --goal 'Japan trip' --deadline 2027-06-01",
+    ],
+    inputSchema: {
+      goal: goalRef,
+      name: z.string().optional(),
+      target: amountNumber.optional(),
+      deadline: z
+        .string()
+        .optional()
+        .describe("ISO date (YYYY-MM-DD), or an empty string to clear the deadline."),
+      behavior: z.enum(["set_aside", "have_balance"]).optional(),
+      color: z.string().optional(),
+      icon: z.string().optional(),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.contribute",
+    group: "goals",
+    subcommand: "contribute",
+    mcpTool: "arc_goals_contribute",
+    mode: "write",
+    description:
+      "Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead.",
+    examples: ["arc goals contribute --goal 'Japan trip' --amount 250"],
+    inputSchema: {
+      goal: goalRef,
+      amount: amountNumber.describe("Amount to add, in major units. Negative to correct an overshoot."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.current",
+    group: "goals",
+    subcommand: "current",
+    mcpTool: "arc_goals_current",
+    mode: "write",
+    description:
+      "Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time.",
+    examples: ["arc goals current --goal 'Japan trip'", "arc goals current --clear"],
+    inputSchema: {
+      goal: goalRef.optional(),
+      clear: z.boolean().optional().describe("Clear the spotlight instead of setting it."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.archive",
+    group: "goals",
+    subcommand: "archive",
+    mcpTool: "arc_goals_archive",
+    mode: "write",
+    description:
+      "Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight.",
+    examples: ["arc goals archive --goal 'Japan trip'"],
+    inputSchema: { goal: goalRef },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.reopen",
+    group: "goals",
+    subcommand: "reopen",
+    mcpTool: "arc_goals_reopen",
+    mode: "write",
+    description: "Un-archive a goal.",
+    examples: ["arc goals reopen --goal 'Japan trip'"],
+    inputSchema: { goal: goalRef },
+    defaultExposure: "default",
+  },
+  {
+    id: "goals.delete",
+    group: "goals",
+    subcommand: "delete",
+    mcpTool: "arc_goals_delete",
+    mode: "write",
+    description:
+      "Remove the goal overlay from an account. The account, its balance and its transactions are left untouched.",
+    examples: ["arc goals delete --goal 'Japan trip'"],
+    inputSchema: { goal: goalRef },
+    defaultExposure: "advanced",
+  },
+
+  // ── splits ─────────────────────────────────────────────────────────────────
+  {
+    id: "splits.list",
+    group: "splits",
+    subcommand: "list",
+    mcpTool: "arc_splits_list",
+    mode: "read",
+    description:
+      "List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled.",
+    examples: ["arc splits list", "arc splits list --person Sam --open --json"],
+    inputSchema: {
+      person: z.string().optional().describe("Only splits involving this person."),
+      open: z.boolean().optional().describe("Only splits with something still owed."),
+      start: dateStr.optional(),
+      end: dateStr.optional(),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "splits.balances",
+    group: "splits",
+    subcommand: "balances",
+    mcpTool: "arc_splits_balances",
+    mode: "read",
+    description:
+      "Who owes you what. Totals each person's outstanding and already-settled amounts across every split.",
+    examples: ["arc splits balances", "arc splits balances --json"],
+    inputSchema: { start: dateStr.optional(), end: dateStr.optional(), json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
+    id: "splits.create",
+    group: "splits",
+    subcommand: "create",
+    mcpTool: "arc_splits_create",
+    mode: "write",
+    description:
+      "Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money.",
+    examples: [
+      "arc splits create --transaction <id> --people 'Sam,Kim' --mode equal --include-self",
+      "arc splits create --transaction <id> --people 'Sam,Kim' --mode percent --values '60,40'",
+    ],
+    inputSchema: {
+      transaction: z.string().describe("Transaction UUID to split."),
+      people: z
+        .array(z.string())
+        .describe("People who owe you a share. Does not include you."),
+      mode: z
+        .enum(["equal", "percent", "exact", "shares"])
+        .describe(
+          "equal splits evenly; percent takes 0-100 per person; exact takes minor units per person; shares takes relative weights."
+        ),
+      values: z
+        .array(z.number())
+        .optional()
+        .describe("One value per person, positional. Required for percent, exact and shares."),
+      include_self: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether you are also sharing the cost. Changes an equal split from n ways to n+1."
+        ),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "splits.settle",
+    group: "splits",
+    subcommand: "settle",
+    mcpTool: "arc_splits_settle",
+    mode: "write",
+    description:
+      "Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income.",
+    examples: [
+      "arc splits settle --gid ab12cd --person Sam",
+      "arc splits settle --gid ab12cd --person Sam --transaction <repayment-id>",
+    ],
+    inputSchema: {
+      gid: z.string().describe("Split group id, from `arc splits list`."),
+      person: z.string(),
+      transaction: z.string().optional().describe("The repayment transaction's UUID."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "splits.reopen",
+    group: "splits",
+    subcommand: "reopen",
+    mcpTool: "arc_splits_reopen",
+    mode: "write",
+    description: "Flip a settled share back to open.",
+    examples: ["arc splits reopen --gid ab12cd --person Sam"],
+    inputSchema: { gid: z.string(), person: z.string() },
+    defaultExposure: "default",
+  },
+  {
+    id: "splits.remove",
+    group: "splits",
+    subcommand: "remove",
+    mcpTool: "arc_splits_remove",
+    mode: "write",
+    description: "Drop one person from a split, leaving everyone else in it.",
+    examples: ["arc splits remove --gid ab12cd --person Sam"],
+    inputSchema: { gid: z.string(), person: z.string() },
+    defaultExposure: "default",
+  },
+  {
+    id: "splits.delete",
+    group: "splits",
+    subcommand: "delete",
+    mcpTool: "arc_splits_delete",
+    mode: "write",
+    description:
+      "Delete an entire split group across every transaction carrying it. The transactions themselves are untouched.",
+    examples: ["arc splits delete --gid ab12cd"],
+    inputSchema: { gid: z.string() },
+    defaultExposure: "advanced",
+  },
+  // ── transactions: refunds ──────────────────────────────────────────────────
+  {
+    id: "transactions.refund",
+    group: "transactions",
+    subcommand: "refund",
+    mcpTool: "arc_transactions_refund",
+    mode: "write",
+    description:
+      "Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows.",
+    examples: ["arc transactions refund --id <transaction-id>"],
+    inputSchema: { id: z.string().describe("Transaction UUID.") },
+    defaultExposure: "default",
+  },
+  {
+    id: "transactions.unrefund",
+    group: "transactions",
+    subcommand: "unrefund",
+    mcpTool: "arc_transactions_unrefund",
+    mode: "write",
+    description:
+      "Undo a refund, restoring the original amount, its direction (expense or income), and the note.",
+    examples: ["arc transactions unrefund --id <transaction-id>"],
+    inputSchema: { id: z.string().describe("Transaction UUID.") },
+    defaultExposure: "default",
+  },
+  {
+    id: "transactions.refunds",
+    group: "transactions",
+    subcommand: "refunds",
+    mcpTool: "arc_transactions_refunds",
+    mode: "read",
+    description:
+      "List refunded transactions with the original amount recovered from the refund token, and when each was marked.",
+    examples: ["arc transactions refunds", "arc transactions refunds --start 2026-01-01 --json"],
+    inputSchema: {
+      account: accountRef.optional(),
+      start: dateStr.optional(),
+      end: dateStr.optional(),
+      json: jsonFlag,
+    },
     defaultExposure: "default",
   },
 ];
