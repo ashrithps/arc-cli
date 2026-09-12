@@ -1,8 +1,15 @@
 const REACTOR_SUFFIX = '.reactor.arc.moi';
 // ArcReactor creates managed Actual services with the `ab-` service prefix in
-// its controlled Cloud Run project/region. This is intentionally not a general
-// `*.run.app` allowance.
-const MANAGED_CLOUD_RUN_HOST = /^ab-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?-z6lmrduzva-ew\.a\.run\.app$/;
+// its controlled Cloud Run project. This is intentionally not a general
+// `*.run.app` allowance: the `ab-` prefix and the project hash are the trust
+// anchor, and both stay mandatory.
+//
+// The region code is the last two letters (`ew` europe-west, `uw` us-west,
+// `uc` us-central, …). It must NOT be pinned — arcreactor provisions instances
+// in whichever region the user is closest to, and hardcoding one locks every
+// other region out of their own server.
+const MANAGED_CLOUD_RUN_HOST =
+  /^ab-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?-z6lmrduzva-[a-z]{2}\.a\.run\.app$/;
 
 function isArcManagedHost(hostname: string): boolean {
   return hostname.endsWith(REACTOR_SUFFIX) || MANAGED_CLOUD_RUN_HOST.test(hostname);
