@@ -57,12 +57,35 @@ export function formatVersion(stamp: VersionStamp | null): string {
   return `arc ${stamp.version} (${stamp.commit.slice(0, 8)}, built ${stamp.builtAt})`;
 }
 
-/** Fetch the stamp published on `main`. Returns null when unreachable. */
+/**
+ * Fetch the stamp published on `main`. Returns null when unreachable.
+ *
+ * `accept-encoding: identity` is load-bearing, not tidiness.
+ * `raw.githubusercontent.com` sits behind a CDN that varies its cache on
+ * Accept-Encoding, and the two variants fall out of sync after a push: the
+ * gzipped copy kept serving the previous commit for minutes while the
+ * identity copy was already current. Node's fetch asks for gzip by default
+ * and curl does not, which is why curl saw a new release and `arc update`
+ * did not.
+ *
+ * Left alone, `arc update --check` reports "already up to date" in the exact
+ * window after a release when it most needs to be right. Neither
+ * `cache: 'no-store'` (local HTTP cache only) nor a cache-busting query
+ * parameter (the CDN does not key on it) fixes that; asking for the
+ * uncompressed variant does. The manifest is ~100 bytes, so there is nothing
+ * to compress anyway.
+ */
 export async function fetchPublishedVersion(
   url: string = VERSION_MANIFEST_URL
 ): Promise<VersionStamp | null> {
   try {
-    const res = await fetch(url, { cache: 'no-store' } as RequestInit);
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        'accept-encoding': 'identity',
+        'cache-control': 'no-cache',
+      },
+    } as RequestInit);
     if (!res.ok) return null;
     const raw: any = await res.json();
     if (!raw || typeof raw.commit !== 'string') return null;
