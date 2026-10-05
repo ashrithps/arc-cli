@@ -357,7 +357,9 @@ function itemsOf(entries: readonly AuditRowWire[], ctx: InterpretContext, now: n
       const i = open.findIndex((it) => it.connectionId === r.connectionId && it.client === r.client && it.rows[0].opId === r.opId);
       if (i >= 0) {
         const it = open.splice(i, 1)[0];
-        const merged = single(r, ctx);
+        // The local journal is keyed by the op.allowed row's id (the auditId the
+        // CLI completed), not by the op.completed row's own id.
+        const merged = single({ ...r, id: it.rows[0].id }, ctx);
         it.rows.push(r);
         it.full = merged.full;
         it.bare = merged.bare;
@@ -368,10 +370,38 @@ function itemsOf(entries: readonly AuditRowWire[], ctx: InterpretContext, now: n
     // Notices duplicate what the timeline already shows.
     if (r.kind === 'notice.sent') continue;
     const it = single(r, ctx);
-    if (r.kind === 'op.allowed') open.push(it);
+    if (r.kind === 'op.allowed') {
+      const why = standingReason(r, rows);
+      if (why) it.nested.push({ text: why, tone: 'dim', at: r.at });
+      open.push(it);
+    }
     items.push(it);
   }
   return items;
+}
+
+/**
+ * Why an operation that would have asked ran without asking: a time-limited
+ * approval the user gave earlier, or an "always" they chose. The server only
+ * records the reason, so the approval that opened the window is found among
+ * the rows: the latest `minutes` approval for the same agent and operation
+ * (or group) whose window still covered this row.
+ */
+export function standingReason(row: AuditRowWire, rows: readonly AuditRowWire[]): string | null {
+  const reason = row.detail?.reason;
+  if (reason === 'op_override' && row.decision === 'allow' && row.risk !== 'read') return 'allowed always, by you';
+  if (reason !== 'grant') return null;
+  let source: AuditRowWire | undefined;
+  for (const a of rows) {
+    if (a.seq >= row.seq) break;
+    if (a.kind !== 'request.approved' || a.detail?.scope !== 'minutes') continue;
+    if (a.connectionId !== row.connectionId || a.client !== row.client) continue;
+    if (a.opId !== row.opId && a.group !== row.group) continue;
+    const minutes = a.detail?.scopeMinutes ?? 15;
+    if (a.at + minutes * 60_000 >= row.at) source = a;
+  }
+  if (!source) return 'under a standing approval';
+  return `under your ${source.detail?.scopeMinutes ?? 15}-minute approval`;
 }
 
 interface Session { connectionId?: string; client?: string; items: Item[]; start: number; end: number }
