@@ -18,6 +18,17 @@ export interface RuntimeConfig {
   budgets?: Record<string, RuntimeBudgetProfile>;
   /** "keychain" once secrets live in the OS keychain instead of this file. */
   secretsIn?: 'keychain';
+  /** Reverse-proxy headers for a self-hosted server. A secret: in the keychain once paired. */
+  customHeaders?: ServerHeader[];
+  /** Set (with no headers in this file) once the headers moved to the keychain. */
+  hasCustomHeaders?: boolean;
+  /** arcreactor-signed arc Premium licence for a self-hosted apiUrl. Not a secret. */
+  cliLicense?: string;
+}
+
+export interface ServerHeader {
+  name: string;
+  value: string;
 }
 
 export interface InstallPayload {
@@ -29,6 +40,8 @@ export interface InstallPayload {
   encryptionPassword?: string;
   generatedAt?: string;
   sourceApp?: string;
+  customHeaders?: ServerHeader[];
+  cliLicense?: string;
 }
 
 export interface ActualConfig {
@@ -38,6 +51,7 @@ export interface ActualConfig {
   encryptionPassword?: string;
   explicitEncryptionPassword?: string;
   dataDir: string;
+  customHeaders?: ServerHeader[];
 }
 
 export interface BudgetFile {

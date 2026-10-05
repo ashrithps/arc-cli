@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// First import, before anything can load @actual-app/api: see src/net/server-headers.ts.
+import './net/install-server-headers.js';
 import 'dotenv/config';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
@@ -29,6 +31,7 @@ import * as server from './operations/server.js';
 import { amountToCents, formatCurrency, printTable, printJson } from './utils/format.js';
 import { makeImportedId } from './utils/imported-id.js';
 import { parseInstallPayload } from './payload.js';
+import { readCliLicense } from './utils/arc-host.js';
 import {
   compareVersions,
   fetchPublishedVersion,
@@ -42,6 +45,8 @@ import { isPaired } from './agent-controls/connection.js';
 import { migrateSecretsToKeychain, keychainApiKey, keychainEncryptionPassword } from './agent-controls/credentials.js';
 import { resolveCliOperation, type CliOperation } from './agent-controls/cli-operation.js';
 import { detectClientFromEnv } from './agent-controls/client-identity.js';
+import { createGateRuntime } from './agent-controls/gate.js';
+import { renewCliLicenseIfNeeded } from './agent-controls/license.js';
 import {
   handleActivity,
   handleAgentGroup,
@@ -1050,6 +1055,11 @@ async function handleAuthCommand(sub: string, flags: Record<string, string>, pos
   }
 }
 
+function describeCliLicense(token: string) {
+  const payload = readCliLicense(token);
+  return { host: payload?.host, expiresAt: typeof payload?.exp === 'number' ? new Date(payload.exp).toISOString() : undefined };
+}
+
 function handleConfigCommand(sub: string, flags: Record<string, string>) {
   switch (sub) {
     case 'show': {
@@ -1060,6 +1070,10 @@ function handleConfigCommand(sub: string, flags: Record<string, string>) {
         defaultSyncId: config.defaultSyncId,
         defaultBudgetName: config.defaultBudgetName,
         secretsIn: config.secretsIn ?? 'config',
+        ...(config.customHeaders?.length || config.hasCustomHeaders
+          ? { customHeaders: config.customHeaders?.map(h => h.name) ?? 'keychain' }
+          : {}),
+        ...(config.cliLicense ? { cliLicense: describeCliLicense(config.cliLicense) } : {}),
         hasApiKey: !!config.apiKey || (config.secretsIn === 'keychain' && !!keychainApiKey()),
         hasEncryptionPassword: !!config.encryptionPassword ||
           (config.secretsIn === 'keychain' && !!keychainEncryptionPassword()),
@@ -1817,6 +1831,12 @@ export async function main(
   // legacy user their server password with nothing they opted into.
   if (isPaired()) {
     try { migrateSecretsToKeychain(); } catch { /* config-store reports a broken config better */ }
+    // A self-hosted server's licence that has already lapsed would stop this
+    // command at the config load, before the gate's own renewal could run.
+    // Costs nothing unless the licence is missing or expired.
+    if (command !== 'auth' && command !== 'update') {
+      await renewCliLicenseIfNeeded(() => createGateRuntime().api, { onlyIfInvalid: true });
+    }
   }
 
   if (command === 'update') {

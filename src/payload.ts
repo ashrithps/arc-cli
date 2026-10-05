@@ -1,5 +1,6 @@
 import type { InstallPayload } from './types.js';
-import { assertArcHost } from './utils/arc-host.js';
+import { assertAllowedHost } from './utils/arc-host.js';
+import { readServerHeaders } from './net/server-headers.js';
 
 function readString(value: unknown, field: keyof InstallPayload, required = false): string | undefined {
   if (value == null) {
@@ -24,7 +25,10 @@ export function parseInstallPayload(raw: string | InstallPayload): InstallPayloa
   }
 
   const apiUrl = readString(parsed.apiUrl, 'apiUrl', true)!;
-  assertArcHost(apiUrl, 'payload.apiUrl');
+  const cliLicense = readString(parsed.cliLicense, 'cliLicense');
+  // Managed hosts pass exactly as before; a self-hosted one needs its licence.
+  assertAllowedHost(apiUrl, 'payload.apiUrl', cliLicense);
+  const customHeaders = readServerHeaders(parsed.customHeaders, 'payload.customHeaders');
 
   return {
     apiUrl,
@@ -35,5 +39,7 @@ export function parseInstallPayload(raw: string | InstallPayload): InstallPayloa
     encryptionPassword: readString(parsed.encryptionPassword, 'encryptionPassword'),
     generatedAt: readString(parsed.generatedAt, 'generatedAt'),
     sourceApp: readString(parsed.sourceApp, 'sourceApp'),
+    ...(customHeaders ? { customHeaders } : {}),
+    ...(cliLicense ? { cliLicense } : {}),
   };
 }

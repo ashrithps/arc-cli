@@ -12,7 +12,7 @@ END:ARC_OPERATIONS_README markers is generated from the registry at
 src/public-surface/operation-registry.ts.
 -->
 
-arc cli connects to your budget hosted on [arc](https://arc.moi). Once signed in, open **Settings → Apps** to find the one-command CLI installer that is pre-baked with your instance URL and credentials.
+arc cli connects to your budget through [arc](https://arc.moi). It works with arc-managed servers, and with your own Actual server on arc Premium. Once signed in, open **Settings → AI agents** to find the one-command CLI installer that is pre-baked with your instance URL and credentials.
 
 arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actualbudget.org). One install gives you:
 
@@ -37,6 +37,13 @@ curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh |
 ```
 
 This works with every version of the arc app. The payload contains your API URL, API key, sync id, and (optionally) an encryption password. Treat it like a secret and run it only on a trusted machine. It gives arc full access to the budget it was generated for: every command and MCP tool runs straight away, and `arc activity` keeps a log of what agents did on this machine.
+
+### Your own Actual server (arc Premium)
+
+If your budget lives on your own Actual server, the install command from the app also carries an **arc Premium licence** signed for that server's address. The CLI checks it on every run: it works for that one host, and a free account's command is refused with a message saying so. Self-hosted servers must use https, except on this machine or your private network (`localhost`, `10.x`, `172.16–31.x`, `192.168.x`, `*.local`).
+
+- **Expiry.** The licence follows your subscription. A paired machine renews it by itself in its last week; an unpaired install needs a fresh install command from the app. `arc auth status` shows the host and expiry.
+- **Reverse-proxy headers.** If your server sits behind Cloudflare Access or another proxy that needs headers, add them on the server connection screen in the app before copying the command. arc sends them only to your Actual server, never to anything else. On a paired machine they live in the Keychain with your other secrets. `ACTUAL_CUSTOM_HEADERS='[{"name":"…","value":"…"}]'` overrides them for one run, and `ARC_CLI_LICENSE` overrides the stored licence.
 
 ### Pair with approvals (Agent Controls)
 
@@ -168,6 +175,7 @@ above; running it again is always safe.
 - macOS-first installer (Linux works for the CLI; the Claude Desktop merge step is a no-op elsewhere).
 - `--pair` install commands carry only a short-lived pairing token; credentials arrive sealed to this machine after you approve it with Face ID.
 - Payload install commands (`--payload`) embed credentials. Only run them on trusted machines.
+- Custom reverse-proxy headers are treated like passwords, and are only ever sent to the configured Actual server's origin.
 - On a paired machine the Actual password and per-budget encryption passwords live in the macOS Keychain or the Linux Secret Service, not in `config.json`; pairing moves them there. Unpaired installs keep them where they always were, so updating changes nothing until you pair. With no Secret Service (a headless Linux server), they stay in `config.json` and arc says so once.
 - Agent Controls stops agents from doing what you did not allow through arc's CLI, MCP and TUI. It does not stop a hostile program running as you from reading the Keychain directly.
 

@@ -1,3 +1,5 @@
+// First import, before anything can load @actual-app/api: see src/net/server-headers.ts.
+import './net/install-server-headers.js';
 import 'dotenv/config';
 import * as fs from 'fs';
 import * as net from 'net';

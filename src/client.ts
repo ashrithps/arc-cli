@@ -1,9 +1,12 @@
+// First import, before anything can load @actual-app/api: see src/net/server-headers.ts.
+import './net/install-server-headers.js';
 import './utils/actual-console.js';
 import * as actualApi from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'node:readline';
 import { getArcDataDir } from './runtime-paths.js';
+import { setServerHeaders } from './net/server-headers.js';
 import { loadRuntimeConfig } from './config-store.js';
 import {
   getBudgetPassword,
@@ -104,6 +107,9 @@ export class ActualClient {
 
   constructor(config: ActualConfig) {
     this.config = config;
+    // Before the first request (the wake probe included): a server behind a
+    // reverse proxy refuses everything without them.
+    setServerHeaders(config.serverURL, config.customHeaders);
     this.pendingBudgetPassword = config.encryptionPassword;
     this.explicitBudgetPassword = config.explicitEncryptionPassword;
     this.state = {
@@ -136,6 +142,7 @@ export class ActualClient {
       encryptionPassword,
       explicitEncryptionPassword,
       dataDir,
+      customHeaders: runtime.customHeaders,
     });
   }
 

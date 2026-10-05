@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+// First import, before anything can load @actual-app/api: see src/net/server-headers.ts.
+import '../net/install-server-headers.js';
 import 'dotenv/config';
 // Disable the @actual-app/api console-noise filter BEFORE anything else
 // imports src/utils/actual-console.ts. The filter wraps process.stdout.write

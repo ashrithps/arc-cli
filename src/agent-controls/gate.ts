@@ -42,6 +42,7 @@ import {
 } from './policy-cache.js';
 import { sealJson } from './seal.js';
 import { uploadCatalogIfChanged } from './catalog.js';
+import { renewCliLicenseIfNeeded } from './license.js';
 import { flushSpool, spoolEvent } from './spool.js';
 import type { OfflineEvent, RequestStatusWire, Surface } from './wire.js';
 
@@ -531,7 +532,11 @@ function sealDetail(
   return sealJson(sealKey, context, { ...detail, ...extra }, { kid: rt.connection?.state.sealKeyId });
 }
 
-/** After any successful contact: refresh a stale policy cache and send spooled offline events. */
+/**
+ * After any successful contact: refresh a stale policy cache, send spooled
+ * offline events, upload a changed catalog, and renew a self-hosted server's
+ * licence in its last week.
+ */
 async function afterContact(rt: GateRuntime, client: string): Promise<void> {
   try {
     const cached = cachedSelf(client, rt.env);
@@ -541,6 +546,7 @@ async function afterContact(rt: GateRuntime, client: string): Promise<void> {
     await flushSpool(rt.api!, rt.env);
     if (rt.connection) await uploadCatalogIfChanged(rt.api!, rt.connection.state, rt.env);
   } catch { /* next time */ }
+  if (rt.connection) await renewCliLicenseIfNeeded(rt.api, { env: rt.env, now: rt.now() });
 }
 
 export async function refreshSelf(client: string, runtime?: GateRuntime) {

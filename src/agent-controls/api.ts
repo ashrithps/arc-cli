@@ -63,6 +63,14 @@ export interface AgentApi {
   auditBatch(events: OfflineEvent[]): Promise<{ accepted: number }>;
   activity(params: { afterSeq?: number; limit?: number; client?: string }): Promise<AuditPageWire>;
   enrollMac(body: { publicKey: string; label: string }): Promise<{ deviceId: string; status: 'pending' }>;
+  /** A fresh arc Premium licence for a self-hosted server; 403 PREMIUM_REQUIRED when the user has none. */
+  cliLicense(apiUrl: string): Promise<CliLicenseResponse>;
+}
+
+export interface CliLicenseResponse {
+  license: string;
+  exp: number;
+  host: string;
 }
 
 export interface HttpAgentApiOptions {
@@ -178,6 +186,9 @@ export function createHttpAgentApi(options: HttpAgentApiOptions): AgentApi {
     },
     async enrollMac(body) {
       return (await call<{ deviceId: string; status: 'pending' }>('POST', '/approvers/mac/enroll', body)).data;
+    },
+    async cliLicense(apiUrl) {
+      return (await call<CliLicenseResponse>('POST', '/cli-license', { apiUrl })).data;
     },
   };
 }

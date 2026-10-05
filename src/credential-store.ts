@@ -167,6 +167,11 @@ export function persistSelectedBudget(
   saveBudgetMetadata(profile, env);
 }
 
+/** Store a renewed arc Premium licence. Not a secret: it lives in config.json. */
+export function saveCliLicense(license: string, env: NodeJS.ProcessEnv = process.env): void {
+  updateStoredConfig(config => ({ ...config, cliLicense: license }), env);
+}
+
 export function saveBootstrapPayload(
   payload: InstallPayload,
   env: NodeJS.ProcessEnv = process.env
@@ -181,6 +186,17 @@ export function saveBootstrapPayload(
       config.encryptionPassword = payload.encryptionPassword;
     } else {
       delete config.encryptionPassword;
+    }
+    // A new install command replaces the server, so it replaces both of these
+    // too; leftovers would follow the user to a different host.
+    if (payload.cliLicense) config.cliLicense = payload.cliLicense;
+    else delete config.cliLicense;
+    delete config.hasCustomHeaders;
+    if (payload.customHeaders?.length) {
+      config.customHeaders = payload.customHeaders;
+    } else {
+      delete config.customHeaders;
+      if (secretsInKeychain(config)) deleteKeychainSecret(SECRET_KEYS.customHeaders, env);
     }
 
     const budgets = ensureBudgets(config);

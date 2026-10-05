@@ -2,10 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { getArcConfigPath } from './runtime-paths.js';
 import type { RuntimeConfig } from './types.js';
-import { assertArcHost } from './utils/arc-host.js';
+import { assertAllowedHost, assertArcHost, isArcManagedUrl } from './utils/arc-host.js';
+import { readServerHeaders } from './net/server-headers.js';
 import {
   keychainApiKey,
   keychainBudgetPassword,
+  keychainCustomHeaders,
   keychainEncryptionPassword,
   secretsInKeychain,
 } from './agent-controls/credentials.js';
@@ -86,6 +88,15 @@ function validateRuntimeConfig(value: unknown, filePath: string): Partial<Runtim
   if ('defaultBudgetName' in value) config.defaultBudgetName = readStringField(value.defaultBudgetName, 'defaultBudgetName', filePath);
   if ('encryptionPassword' in value) config.encryptionPassword = readStringField(value.encryptionPassword, 'encryptionPassword', filePath);
   if (value.secretsIn === 'keychain') config.secretsIn = 'keychain';
+  if ('customHeaders' in value) {
+    try {
+      config.customHeaders = readServerHeaders(value.customHeaders, 'customHeaders');
+    } catch (error) {
+      throw invalidConfigError(filePath, error instanceof Error ? error.message : String(error));
+    }
+  }
+  if ('hasCustomHeaders' in value) config.hasCustomHeaders = readBooleanField(value.hasCustomHeaders, 'hasCustomHeaders', filePath);
+  if ('cliLicense' in value) config.cliLicense = readStringField(value.cliLicense, 'cliLicense', filePath);
 
   if ('budgets' in value) {
     if (!isPlainObject(value.budgets)) {
@@ -129,15 +140,25 @@ function resolveRuntimeConfig(
   }
 
   // apiUrl is the host we actually send credentials to, so it is the one that
-  // must satisfy the arc.moi restriction on every load — not just at bootstrap
-  // time in parseInstallPayload. Without this, ACTUAL_SERVER_URL (or a
-  // hand-edited ~/.arc-cli/config.json) silently bypasses the lock.
-  assertArcHost(apiUrl, env.ACTUAL_SERVER_URL ? 'ACTUAL_SERVER_URL' : 'apiUrl');
+  // must satisfy the host rule on every load — not just at bootstrap time in
+  // parseInstallPayload. Without this, ACTUAL_SERVER_URL (or a hand-edited
+  // ~/.arc-cli/config.json) silently bypasses the lock. A self-hosted host
+  // needs a current licence signed for it; managed hosts are unchanged.
+  const cliLicense = env.ARC_CLI_LICENSE ?? saved?.cliLicense;
+  assertAllowedHost(apiUrl, env.ACTUAL_SERVER_URL ? 'ACTUAL_SERVER_URL' : 'apiUrl', cliLicense);
 
   const displayUrl = env.ACTUAL_DISPLAY_URL ?? saved?.displayUrl;
   if (displayUrl) {
-    assertArcHost(displayUrl, env.ACTUAL_DISPLAY_URL ? 'ACTUAL_DISPLAY_URL' : 'displayUrl');
+    const source = env.ACTUAL_DISPLAY_URL ? 'ACTUAL_DISPLAY_URL' : 'displayUrl';
+    // Nothing is sent to displayUrl; it only has to be a URL. Managed installs
+    // keep their old, stricter check.
+    if (isArcManagedUrl(apiUrl)) assertArcHost(displayUrl, source);
+    else if (!URL.canParse(displayUrl)) throw new Error(`Invalid ${source}: "${displayUrl}" is not a valid URL.`);
   }
+
+  const customHeaders = env.ACTUAL_CUSTOM_HEADERS
+    ? readServerHeaders(parseJsonEnv(env.ACTUAL_CUSTOM_HEADERS, 'ACTUAL_CUSTOM_HEADERS'), 'ACTUAL_CUSTOM_HEADERS')
+    : saved?.customHeaders ?? (inKeychain && saved?.hasCustomHeaders ? keychainCustomHeaders(env) : undefined);
 
   const defaultSyncId = env.ACTUAL_BUDGET_SYNC_ID ?? saved?.defaultSyncId;
   let budgets = saved?.budgets;
@@ -159,7 +180,17 @@ function resolveRuntimeConfig(
       (inKeychain ? keychainEncryptionPassword(env) : undefined),
     budgets,
     secretsIn: saved?.secretsIn,
+    ...(customHeaders ? { customHeaders } : {}),
+    ...(cliLicense ? { cliLicense } : {}),
   };
+}
+
+function parseJsonEnv(raw: string, name: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`Invalid ${name}: must be JSON, e.g. [{"name":"CF-Access-Client-Id","value":"…"}]`);
+  }
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {

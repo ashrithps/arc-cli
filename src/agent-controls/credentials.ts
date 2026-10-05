@@ -11,7 +11,8 @@
  * - With no OS keychain (headless Linux without `secret-tool`) the config is
  *   left alone and a single warning says so; a weaker invented home would
  *   only add a second place to leak from.
- * - Environment overrides (`ACTUAL_PASSWORD`, `ACTUAL_ENCRYPTION_PASSWORD`)
+ * - Environment overrides (`ACTUAL_PASSWORD`, `ACTUAL_ENCRYPTION_PASSWORD`,
+ *   `ACTUAL_CUSTOM_HEADERS`)
  *   still win over both stores; config-store applies them.
  */
 import fs from 'node:fs';
@@ -23,6 +24,8 @@ export const SECRET_KEYS = {
   apiKey: 'api_key',
   encryptionPassword: 'encryption_password',
   budgetPassword: (syncId: string) => `budget_password.${syncId}`,
+  // Reverse-proxy headers for a self-hosted server, as JSON [{name, value}].
+  customHeaders: 'custom_headers',
   // Agent connection (written by `arc auth pair`)
   agentCredential: 'agent_credential',
   agentPrivateKey: 'agent_private_key',
@@ -63,6 +66,9 @@ function plaintextSecrets(config: RawConfig): Map<string, string> {
     const pw = (budget as any)?.encryptionPassword;
     if (typeof pw === 'string' && pw) out.set(SECRET_KEYS.budgetPassword(syncId), pw);
   }
+  if (Array.isArray(config.customHeaders) && config.customHeaders.length) {
+    out.set(SECRET_KEYS.customHeaders, JSON.stringify(config.customHeaders));
+  }
   return out;
 }
 
@@ -70,6 +76,8 @@ function stripSecrets(config: RawConfig): RawConfig {
   const next = { ...config };
   delete next.apiKey;
   delete next.encryptionPassword;
+  if (Array.isArray(next.customHeaders) && next.customHeaders.length) next.hasCustomHeaders = true;
+  delete next.customHeaders;
   if (next.budgets && typeof next.budgets === 'object') {
     next.budgets = Object.fromEntries(
       Object.entries(next.budgets).map(([syncId, budget]) => {
@@ -168,6 +176,18 @@ export function keychainBudgetPassword(syncId: string, env: NodeJS.ProcessEnv = 
   return readSecret(SECRET_KEYS.budgetPassword(syncId), env) ?? undefined;
 }
 
+/** The keychain's custom headers, or undefined when none (or unreadable JSON). */
+export function keychainCustomHeaders(env: NodeJS.ProcessEnv = process.env): { name: string; value: string }[] | undefined {
+  const raw = readSecret(SECRET_KEYS.customHeaders, env);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function deleteKeychainSecret(key: string, env: NodeJS.ProcessEnv = process.env): void {
   try {
     getKeychain(env)?.delete(key);
@@ -179,11 +199,13 @@ export function wipeActualSecrets(env: NodeJS.ProcessEnv = process.env): void {
   const config = readRaw(env);
   deleteKeychainSecret(SECRET_KEYS.apiKey, env);
   deleteKeychainSecret(SECRET_KEYS.encryptionPassword, env);
+  deleteKeychainSecret(SECRET_KEYS.customHeaders, env);
   for (const syncId of Object.keys(config?.budgets ?? {})) {
     deleteKeychainSecret(SECRET_KEYS.budgetPassword(syncId), env);
   }
   if (config) {
     const stripped = stripSecrets(config);
+    delete stripped.hasCustomHeaders;
     for (const budget of Object.values(stripped.budgets ?? {})) (budget as any).hasSavedPassword = false;
     writeRaw(stripped, env);
   }

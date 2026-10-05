@@ -11,7 +11,9 @@ import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import chalk from 'chalk';
 import { parseInstallPayload } from '../payload.js';
-import { saveBootstrapPayload } from '../credential-store.js';
+import { getInstalledConfig, saveBootstrapPayload } from '../credential-store.js';
+import { isArcManagedUrl, readCliLicense } from '../utils/arc-host.js';
+import { cliLicenseState } from './license.js';
 import { loadRuntimeConfig } from '../config-store.js';
 import { getLocalVersion } from '../version.js';
 import { AgentApiError, AgentUnreachableError, createHttpAgentApi } from './api.js';
@@ -352,13 +354,19 @@ export async function handleAuthStatus(flags: Flags, env: NodeJS.ProcessEnv = pr
     secretsIn,
     lastContactAt: cache.lastContactAt ? new Date(cache.lastContactAt).toISOString() : undefined,
     agentsUrl: agentsBaseUrl(env, state),
+    license: selfHostedLicense(env),
   };
   if (isJson(flags)) return print(report);
+  const license = report.license as ReturnType<typeof selfHostedLicense>;
+  const licenseLine = license && (license.host
+    ? `${license.host} · ${license.state === 'invalid' ? 'not valid' : 'expires'} ${license.expiresAt?.slice(0, 10) ?? ''}`
+    : 'none (self-hosted servers need arc Premium)');
 
   if (!state || state.status !== 'active') {
     console.log(`${chalk.bold('Not paired.')} Agents run without asking; only this machine keeps a record.`);
     console.log(chalk.dim('Pair from the arc app: Settings → AI agents → Connect a machine.'));
     console.log(chalk.dim(`Secrets: ${secretsIn}`));
+    if (licenseLine) console.log(chalk.dim(`Premium licence: ${licenseLine}`));
     return;
   }
   console.log(`${chalk.green('●')} Paired as ${chalk.bold(state.label ?? state.hostname)}`);
@@ -366,7 +374,26 @@ export async function handleAuthStatus(flags: Flags, env: NodeJS.ProcessEnv = pr
   console.log(`  ${chalk.dim('for')}          ${state.intendedClient ? clientDisplay(state.intendedClient) : 'any agent'}`);
   console.log(`  ${chalk.dim('touch id')}     ${state.macDeviceId ? 'enrolled' : 'not enrolled (arc approvals enroll-mac)'}`);
   console.log(`  ${chalk.dim('secrets')}      ${secretsIn}`);
+  if (licenseLine) console.log(`  ${chalk.dim('licence')}      ${licenseLine}`);
   console.log(`  ${chalk.dim('last contact')} ${report.lastContactAt ?? 'never'}`);
+}
+
+/** The arc Premium licence behind a self-hosted server, for `arc auth status`; undefined on managed hosts. */
+function selfHostedLicense(env: NodeJS.ProcessEnv) {
+  let apiUrl: string | undefined;
+  let token: string | undefined;
+  try {
+    const installed = getInstalledConfig(env);
+    apiUrl = env.ACTUAL_SERVER_URL ?? installed.apiUrl;
+    token = env.ARC_CLI_LICENSE ?? installed.cliLicense;
+  } catch { return undefined; }
+  if (!apiUrl || isArcManagedUrl(apiUrl)) return undefined;
+  const payload = readCliLicense(token);
+  return {
+    host: payload?.host,
+    expiresAt: typeof payload?.exp === 'number' ? new Date(payload.exp).toISOString() : undefined,
+    state: cliLicenseState(apiUrl, token),
+  };
 }
 
 /**
