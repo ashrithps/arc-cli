@@ -90,7 +90,11 @@ export function stripTagsForDisplay(notes: string | null | undefined): string | 
 // TypeScript signatures show.
 
 function tagHandler(client: ActualClient): (handler: string, args?: any) => Promise<any> {
-  return (client.api as any).internal.send;
+  // `client.internals` is the handle `init()` returned. The module-level
+  // `internal` export it replaced is null on @actual-app/api 26.x, which made
+  // every tag command throw "Cannot read properties of null (reading 'send')".
+  const internals = client.internals as any;
+  return (handler, args) => internals.send(handler, args);
 }
 
 export async function listTags(client: ActualClient): Promise<Tag[]> {

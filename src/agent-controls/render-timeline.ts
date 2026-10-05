@@ -329,7 +329,10 @@ function requestItem(rows: AuditRowWire[], ctx: InterpretContext, now: number): 
     }
   }
   if (created.mismatch) nested.push({ text: 'from a connection made for another agent', tone: 'brass' });
-  return { ...base, ...sentence, tone, nested, rows, node: nodeOf(ran ?? created) };
+  // A request the server consumed was witnessed by the server, even though the
+  // agent reports the outcome itself.
+  const consumed = rows.find((r) => r.kind === 'request.consumed' && r.source === 'server');
+  return { ...base, ...sentence, tone, nested, rows, node: consumed ? '●' : nodeOf(ran ?? created) };
 }
 
 /** Rows (any order) → display items, oldest first. */
@@ -695,7 +698,8 @@ export function renderPending(requests: readonly PendingRequestSummaryWire[], op
     const text = truncate(sentence, room);
     const head = `${GUTTER}${p.brass('◆')}  ${badge(p, r.risk, 'ink')}${p.bold(text)}`;
     out.push(justify(head, TEXT_COL + displayWidth(text), left > 0 ? p.brass(right) : p.dim(right), right.length, width));
-    const meta = `${r.id} · ${r.opId} · asked ${span(now - r.createdAt)} ago`;
+    const asked = span(now - r.createdAt);
+    const meta = `${r.id} · ${r.opId} · asked ${asked === 'now' ? 'just now' : `${asked} ago`}`;
     out.push(`${GUTTER}${p.faint(i === sorted.length - 1 ? ' ' : '│')}${spaces(TEXT_COL - GUTTER.length - 1)}${p.dim(truncate(meta, width - TEXT_COL))}`);
   });
   out.push('');

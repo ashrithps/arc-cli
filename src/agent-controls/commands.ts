@@ -676,6 +676,19 @@ export function verifyCache(cache: AuditCache): ChainVerdict {
   return inner;
 }
 
+/**
+ * The newest `limit` rows, plus any older row of a request they show. A cut
+ * that kept an action but dropped its approval rendered the action as still
+ * "waiting on you".
+ */
+export function withRequestSiblings<T extends { requestId?: string }>(sorted: T[], limit: number): T[] {
+  const tail = sorted.slice(-limit);
+  const ids = new Set(tail.map(r => r.requestId).filter(Boolean));
+  if (!ids.size) return tail;
+  const head = sorted.slice(0, Math.max(0, sorted.length - limit)).filter(r => r.requestId && ids.has(r.requestId));
+  return [...head, ...tail];
+}
+
 /** "2h", "3d", "45m", or an ISO date → ms since epoch. */
 export function parseSince(value: string | undefined, now: number): number | undefined {
   if (!value || value === 'true') return undefined;
@@ -742,10 +755,10 @@ export async function handleActivity(flags: Flags, runtime?: GateRuntime): Promi
   const verdict = head ? verifyCache({ rows: server, head, checkpoint }) : undefined;
   const keep = (row: AuditRowWire) =>
     (since == null || row.at >= since) && (!client || row.client === client);
-  const rows = [...server, ...journalRows(journal.filter(e => !rt.connection || e.decision === 'local'))]
+  const all = [...server, ...journalRows(journal.filter(e => !rt.connection || e.decision === 'local'))]
     .filter(keep)
-    .sort((a, b) => a.at - b.at || a.seq - b.seq)
-    .slice(-limit);
+    .sort((a, b) => a.at - b.at || a.seq - b.seq);
+  const rows = withRequestSiblings(all, limit);
 
   if (isJson(flags)) {
     print({
