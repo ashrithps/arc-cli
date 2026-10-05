@@ -68,6 +68,15 @@ const WRITE_ENUMS: Record<string, string> = {
   'splits.reopen': 'reopen:split',
   'splits.remove': 'remove:split-person',
   'splits.delete': 'delete:split',
+  'categories.group-create': 'add:category-group',
+  'categories.group-update': 'update:category-group',
+  'categories.group-delete': 'delete:category-group',
+  'categories.template-set': 'set:budget-template',
+  'categories.template-clear': 'clear:budget-template',
+  'debts.set': 'set:debt-due-day',
+  'debts.clear': 'clear:debt',
+  'accounts.reconcile': 'reconcile:account',
+  'reconcile.apply': 'apply:bank-statement',
 };
 
 const READ_NOUNS: Record<string, string> = {
@@ -83,6 +92,8 @@ const READ_NOUNS: Record<string, string> = {
   portfolio: 'portfolio',
   goals: 'goals',
   splits: 'splits',
+  debts: 'debts',
+  reconcile: 'statements',
   server: 'server',
   agent: 'permissions',
 };
