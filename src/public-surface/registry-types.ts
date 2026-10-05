@@ -26,7 +26,9 @@ export type PublicOperationGroup =
   | "query"
   | "portfolio"
   | "goals"
+  | "debts"
   | "splits"
+  | "reconcile"
   | "server"
   | "agent";
 

@@ -10,6 +10,11 @@ import { getBudgetPassword, getInstalledConfig, persistBudgetCatalog, saveBootst
 import * as accounts from './operations/accounts.js';
 import * as transactions from './operations/transactions.js';
 import * as categories from './operations/categories.js';
+import * as reconcile from './operations/reconciliation.js';
+import { looselyParseAmount } from './reconcile/account.js';
+import * as debts from './operations/debts.js';
+import * as categoryTemplates from './operations/category-templates.js';
+import { flagsForClearedState, parseClearedState } from './codecs/cleared-status.js';
 import * as payees from './operations/payees.js';
 import * as rules from './operations/rules.js';
 import * as schedules from './operations/schedules.js';
@@ -17,6 +22,7 @@ import * as budgets from './operations/budgets.js';
 import * as queries from './operations/queries.js';
 import * as tags from './operations/tags.js';
 import * as portfolio from './operations/portfolio.js';
+import * as portfolioHistory from './operations/portfolio-history.js';
 import * as goals from './operations/goals.js';
 import * as splits from './operations/splits.js';
 import * as server from './operations/server.js';
@@ -145,6 +151,31 @@ async function handleConnect(client: ActualClient, flags: Record<string, string>
   }, accts);
 }
 
+/** `--file` or `--lines '<json>'` (major units) plus the statement flags → a StatementInput. */
+async function statementInputFromFlags(
+  client: ActualClient,
+  flags: Record<string, string>
+): Promise<reconcile.StatementInput> {
+  const accountId = await accounts.resolveAccountId(client, requireFlag(flags, 'account', 'id'));
+  const linesFlag = getFlag(flags, 'lines');
+  const parsed = reconcile.loadStatement({
+    file: getFlag(flags, 'file'),
+    lines: linesFlag ? JSON.parse(linesFlag) : undefined,
+    dateFormat: getFlag(flags, 'date-format'),
+    invert: flags.invert === 'true',
+  });
+  const window = getFlag(flags, 'window-days');
+  const opening = getFlag(flags, 'opening-balance');
+  const closing = getFlag(flags, 'closing-balance');
+  return {
+    accountId,
+    lines: parsed.lines,
+    windowDays: window != null ? parseInt(window, 10) : undefined,
+    openingBalance: opening != null ? amountToCents(parseFloat(opening)) : parsed.openingBalance,
+    closingBalance: closing != null ? amountToCents(parseFloat(closing)) : parsed.closingBalance,
+  };
+}
+
 async function handleAccounts(client: ActualClient, writer: SafeWriter, sub: string, flags: Record<string, string>) {
   switch (sub) {
     case 'list': {
@@ -203,8 +234,22 @@ async function handleAccounts(client: ActualClient, writer: SafeWriter, sub: str
       console.log('Account deleted.');
       break;
     }
+    case 'reconcile': {
+      const id = await accounts.resolveAccountId(client, requireFlag(flags, 'account', 'id'));
+      const raw = requireFlag(flags, 'balance');
+      // Accept a balance pasted from a banking app: "$1,240.55", "(50.00)", "1.240,55".
+      const major = looselyParseAmount(raw.trim());
+      if (major == null) throw new Error(`Unreadable balance "${raw}".`);
+      const res = await reconcile.reconcileAccount(client, writer, {
+        accountId: id,
+        statementBalanceCents: amountToCents(major),
+        date: getFlag(flags, 'date'),
+      });
+      if (isJson(flags)) return printJson(res);
+      return ui.printAccountReconciled(res);
+    }
     default:
-      throw new Error(`Unknown accounts subcommand: ${sub}. Use: list, balance, create, update, close, reopen, delete`);
+      throw new Error(`Unknown accounts subcommand: ${sub}. Use: list, balance, create, update, close, reopen, delete, reconcile`);
   }
 }
 
@@ -287,6 +332,7 @@ async function handleTransactions(client: ActualClient, writer: SafeWriter, sub:
       if (flags.date) fields.date = flags.date;
       if (flags.notes) fields.notes = flags.notes;
       if (flags.cleared) fields.cleared = flags.cleared === 'true';
+      if (flags.status) Object.assign(fields, flagsForClearedState(parseClearedState(flags.status)));
       if (flags.category) {
         const cat = await categories.findCategoryByName(client, flags.category);
         if (cat) fields.category = cat.id;
@@ -516,8 +562,22 @@ async function handleTransactions(client: ActualClient, writer: SafeWriter, sub:
       if (isJson(flags)) return printJson(rows);
       return ui.printRefunds(rows);
     }
+    case 'duplicates': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const window = getFlag(flags, 'window-days');
+      const minScore = getFlag(flags, 'min-score');
+      const groups = await reconcile.duplicates(client, {
+        accountId,
+        since: getFlag(flags, 'since'),
+        windowDays: window != null ? parseInt(window, 10) : undefined,
+        minScore: minScore != null ? parseFloat(minScore) : undefined,
+      });
+      if (isJson(flags)) return printJson(groups);
+      return ui.printDuplicateGroups(groups);
+    }
     default:
-      throw new Error(`Unknown transactions subcommand: ${sub}. Use: list, add, import, update, delete, split, transfer, refund, unrefund, refunds, batch-update, batch-add, batch-categorize`);
+      throw new Error(`Unknown transactions subcommand: ${sub}. Use: list, add, import, update, delete, split, transfer, refund, unrefund, refunds, duplicates, batch-update, batch-add, batch-categorize`);
   }
 }
 
@@ -581,8 +641,64 @@ async function handleCategories(client: ActualClient, writer: SafeWriter, sub: s
       console.log('Category deleted.');
       break;
     }
+    case 'group-create': {
+      const name = requireFlag(flags, 'name');
+      const isIncome = getFlag(flags, 'income') === 'true';
+      const id = await categories.createCategoryGroup(client, writer, name, isIncome);
+      if (isJson(flags)) return printJson({ id });
+      console.log(`Created category group: ${name} (${id})`);
+      break;
+    }
+    case 'group-update': {
+      const id = await categories.resolveCategoryGroupIdExact(client, requireFlag(flags, 'id'));
+      const fields: any = {};
+      if (flags.name) fields.name = flags.name;
+      if (flags.hidden) fields.hidden = flags.hidden === 'true';
+      await categories.updateCategoryGroup(client, writer, id, fields);
+      console.log('Category group updated.');
+      break;
+    }
+    case 'group-delete': {
+      const id = await categories.resolveCategoryGroupIdExact(client, requireFlag(flags, 'id'));
+      const transferTo = getFlag(flags, 'transfer-to');
+      const transferToId = transferTo ? await categories.resolveCategoryId(client, transferTo) : undefined;
+      await categories.deleteCategoryGroup(client, writer, id, transferToId);
+      console.log('Category group deleted.');
+      break;
+    }
+    case 'templates': {
+      const list = await categoryTemplates.listTemplates(client);
+      if (isJson(flags)) return printJson(list);
+      ui.printCategoryTemplates(list);
+      break;
+    }
+    case 'template-set': {
+      const id = await categories.resolveCategoryId(client, requireFlag(flags, 'category', 'id'));
+      const repeat = getFlag(flags, 'repeat-months', 'repeat_months');
+      const emitGoal = getFlag(flags, 'emit-goal', 'emit_goal');
+      const result = await categoryTemplates.setTemplate(client, writer, id, {
+        targetCents: amountToCents(parseFloat(requireFlag(flags, 'target'))),
+        byMonth: requireFlag(flags, 'by'),
+        repeatEveryMonths: repeat !== undefined ? parseInt(repeat, 10) : null,
+        emitGoal: emitGoal === undefined ? undefined : emitGoal !== 'false',
+      });
+      if (isJson(flags)) return printJson(result);
+      ui.printTemplateWrite(result);
+      break;
+    }
+    case 'template-clear': {
+      const id = await categories.resolveCategoryId(client, requireFlag(flags, 'category', 'id'));
+      const result = await categoryTemplates.clearTemplate(client, writer, id);
+      if (isJson(flags)) return printJson(result);
+      console.log(
+        result.changed
+          ? `Removed the savings target from ${result.categoryName}.`
+          : `${result.categoryName} had no savings target arc manages. Nothing changed.`
+      );
+      break;
+    }
     default:
-      throw new Error(`Unknown categories subcommand: ${sub}`);
+      throw new Error(`Unknown categories subcommand: ${sub}. Use: list, create, update, delete, group-create, group-update, group-delete, templates, template-set, template-clear`);
   }
 }
 
@@ -1208,6 +1324,65 @@ async function handleSplits(
   }
 }
 
+async function handleReconcile(
+  client: ActualClient,
+  writer: SafeWriter,
+  sub: string,
+  flags: Record<string, string>
+) {
+  switch (sub) {
+    case 'statement': {
+      const report = await reconcile.statement(client, await statementInputFromFlags(client, flags));
+      if (isJson(flags)) return printJson(report);
+      return ui.printStatementReport(report);
+    }
+    case 'apply': {
+      const res = await reconcile.applyStatement(client, writer, await statementInputFromFlags(client, flags));
+      if (isJson(flags)) return printJson(res);
+      return ui.printStatementApplied(res);
+    }
+    default:
+      throw new Error(`Unknown reconcile subcommand: ${sub}. Use: statement, apply`);
+  }
+}
+
+async function handleDebts(
+  client: ActualClient,
+  writer: SafeWriter,
+  sub: string,
+  flags: Record<string, string>
+) {
+  const accountId = () => accounts.resolveAccountId(client, requireFlag(flags, 'account', 'id'));
+
+  switch (sub) {
+    case 'list': {
+      const list = await debts.listDebts(client);
+      if (isJson(flags)) return printJson(list);
+      return ui.printDebts(list);
+    }
+    case 'set': {
+      const debt = await debts.setDebt(client, writer, await accountId(), {
+        dueDay: parseInt(requireFlag(flags, 'due'), 10),
+      });
+      if (isJson(flags)) return printJson(debt);
+      console.log(`${debt.accountName} is due on day ${debt.dueDay} of each month.`);
+      return;
+    }
+    case 'clear': {
+      const res = await debts.clearDebt(client, writer, await accountId());
+      if (isJson(flags)) return printJson(res);
+      console.log(
+        res.removed
+          ? `${res.accountName} is no longer tracked as a debt. The account was left untouched.`
+          : `${res.accountName} was not tracked as a debt. Nothing changed.`
+      );
+      return;
+    }
+    default:
+      throw new Error(`Unknown debts subcommand: ${sub}. Use: list, set, clear`);
+  }
+}
+
 async function handleGoals(
   client: ActualClient,
   writer: SafeWriter,
@@ -1344,8 +1519,45 @@ async function handlePortfolio(client: ActualClient, sub: string, flags: Record<
       ui.printPortfolioAccounts(accts);
       break;
     }
+    case 'realized': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const report = await portfolioHistory.realized(client, {
+        account: accountId,
+        from: getFlag(flags, 'from'),
+        to: getFlag(flags, 'to'),
+        period: getFlag(flags, 'period') as portfolioHistory.RealizedPeriod | undefined,
+      });
+      if (isJson(flags)) return printJson(report);
+      ui.printRealized(report, accountName);
+      break;
+    }
+    case 'dividends': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const report = await portfolioHistory.dividends(client, {
+        account: accountId,
+        from: getFlag(flags, 'from'),
+        to: getFlag(flags, 'to'),
+      });
+      if (isJson(flags)) return printJson(report);
+      ui.printDividends(report, accountName);
+      break;
+    }
+    case 'history': {
+      const accountName = getFlag(flags, 'account');
+      const accountId = accountName ? await accounts.resolveAccountId(client, accountName) : undefined;
+      const report = await portfolioHistory.history(client, {
+        account: accountId,
+        from: getFlag(flags, 'from'),
+        to: getFlag(flags, 'to'),
+      });
+      if (isJson(flags)) return printJson(report);
+      ui.printPortfolioHistory(report, accountName);
+      break;
+    }
     default:
-      throw new Error(`Unknown portfolio subcommand: ${sub}. Use: list, holding, trades, summary, accounts`);
+      throw new Error(`Unknown portfolio subcommand: ${sub}. Use: list, holding, trades, summary, accounts, realized, dividends, history`);
   }
 }
 
@@ -1407,7 +1619,7 @@ async function handleSessionCommand(sub: string, flags: Record<string, string>) 
 /** Commands `executeParsedCommand` (or the one-shot path in `main`) actually runs. */
 export const DATA_COMMANDS: ReadonlySet<string> = new Set([
   'connect', 'doctor', 'files', 'accounts', 'transactions', 'categories', 'payees', 'tags', 'rules',
-  'schedules', 'budgets', 'query', 'portfolio', 'goals', 'splits',
+  'schedules', 'budgets', 'query', 'portfolio', 'goals', 'debts', 'splits', 'reconcile',
 ]);
 
 export async function executeParsedCommand(
@@ -1432,7 +1644,9 @@ export async function executeParsedCommand(
     case 'query': await handleQuery(client, subcommand, flags, positional); break;
     case 'portfolio': await handlePortfolio(client, subcommand, flags); break;
     case 'goals': await handleGoals(client, writer, subcommand, flags); break;
+    case 'debts': await handleDebts(client, writer, subcommand, flags); break;
     case 'splits': await handleSplits(client, writer, subcommand, flags); break;
+    case 'reconcile': await handleReconcile(client, writer, subcommand, flags); break;
     default: console.error(`Unknown command: ${command}`); printHelp();
   }
 }

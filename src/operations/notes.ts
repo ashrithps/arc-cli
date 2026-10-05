@@ -137,6 +137,9 @@ export async function mutateNote(
   const result = await writer.write(label, async () => {
     const current = await readNote(client, id);
     next = fn(current);
+    // A no-op edit writes nothing: saving '' over a missing note would create
+    // an empty row the app never had (e.g. clearing a template that wasn't set).
+    if (next === (current ?? '')) return undefined;
     return client.internals.send('notes-save' as any, { id, note: next } as any);
   });
   if (!result.success) throw new Error(result.error);

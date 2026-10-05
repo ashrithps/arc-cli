@@ -150,6 +150,22 @@ export async function deleteCategoryGroup(
   if (!result.success) throw new Error(result.error);
 }
 
+/**
+ * Resolve a category group by exact id or exact (case-insensitive) name.
+ * Unlike `resolveCategoryGroupId` there is no partial match: this feeds
+ * rename and delete, where a near-miss would act on the wrong group.
+ */
+export async function resolveCategoryGroupIdExact(client: ActualClient, nameOrId: string): Promise<string> {
+  const groups = await listCategoryGroups(client);
+  const byId = groups.find(g => g.id === nameOrId);
+  if (byId) return byId.id;
+  const lower = nameOrId.trim().toLowerCase();
+  const matches = groups.filter(g => g.name.toLowerCase() === lower);
+  if (matches.length === 1) return matches[0].id;
+  if (matches.length > 1) throw new Error(`More than one category group is named "${nameOrId}". Pass its id.`);
+  throw new Error(`No category group named "${nameOrId}". Run \`arc categories list\` to see them.`);
+}
+
 export async function findCategoryByName(client: ActualClient, name: string): Promise<Category | undefined> {
   const categories = await listCategories(client);
   const lower = name.toLowerCase();

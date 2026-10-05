@@ -16,7 +16,7 @@ arc cli connects to your budget hosted on [arc](https://arc.moi). Once signed in
 
 arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actualbudget.org). One install gives you:
 
-- an `arc` command-line interface covering accounts, transactions, categories, payees, rules, schedules, budget months, and reports
+- an `arc` command-line interface covering accounts, transactions, categories and category groups, payees, tags, rules, schedules, budget months, savings goals, debts, budget templates, group splits, refunds, statement reconciliation, duplicate detection, investment portfolios, and reports
 - a terminal UI via `arc ui`
 - a stdio MCP server via `arc mcp` that exposes every data operation as a structured tool for agents
 
@@ -26,32 +26,62 @@ arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actua
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 ```
 
-### Pair with the arc app (recommended)
+There are two ways to connect arc to your budget. Both are supported, and they work side by side on the same budget.
 
-In the arc app, open **Settings → AI agents → Connect a machine**, choose how much agents may do, and copy the command it shows:
+### Install with the command from the arc app
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --pair <token> --agent claude-code
-```
-
-The installer prints four words. Check that they match the ones on your phone, then approve with Face ID. Your budget's credentials arrive sealed to this machine's key and go straight into the macOS Keychain (or the Linux Secret Service), never into a file. From then on:
-
-- **Agents ask before they change anything.** Under the default **Standard** preset, reads run and every change waits for your approval on your phone. You can set each agent to Full, Standard or Private, override any group or operation, and approve once, for 15 or 60 minutes, or always.
-- **Touch ID on this Mac.** `arc approvals enroll-mac` lets you approve writes here with Touch ID. Destructive changes always go to your phone.
-- **A tamper-evident timeline.** `arc activity` shows what every agent did, day by day, and checks the server's hash chain so a rewritten history shows up as one.
-- `arc agents whoami` shows what the current agent may do. `arc auth status` shows the pairing.
-
-Already installed? Run `arc auth pair <token>` with the token from the app.
-
-### One-Command Payload Bootstrap (legacy)
-
-The payload command still works, without approvals, for anyone on an arc app that does not have **Connect a machine** yet:
+In the arc app, open **Settings → AI agents** and copy the install command it shows:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --payload '<json-payload>'
 ```
 
-The payload contains your API URL, API key, sync id, and (optionally) an encryption password. Treat it like a secret and run it only on a trusted machine — it gives arc full access to the budget it was generated for.
+This works with every version of the arc app. The payload contains your API URL, API key, sync id, and (optionally) an encryption password. Treat it like a secret and run it only on a trusted machine. It gives arc full access to the budget it was generated for: every command and MCP tool runs straight away, and `arc activity` keeps a log of what agents did on this machine.
+
+### Pair with approvals (Agent Controls)
+
+Pairing needs an arc app that shows **Connect a machine** under **Settings → AI agents**. It arrives with the next app release; until your app has it, use the command above. You can pair an existing install later without reinstalling.
+
+In the app, open **Settings → AI agents → Connect a machine**, choose how much agents may do, and copy the command it shows:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --pair <token> --agent claude-code
+```
+
+Already installed? Run `arc auth pair <token> [--agent <key>] [--label <name>]` with the token from the app.
+
+The installer prints four words. Check that they match the ones on your phone, then approve with Face ID. Your budget's credentials arrive sealed to this machine's key and go straight into the macOS Keychain (or the Linux Secret Service), never into a file. If this machine was installed with a payload, pairing moves its existing secrets out of `config.json` into the Keychain. From then on:
+
+- **Agents ask before they change anything.** Under the default **Standard** preset, reads run and every change waits for your approval on your phone. You can set each agent to **Full**, **Standard** or **Private**, override any group or operation with Allow, Ask or Deny, and approve once, for 15 or 60 minutes, or always.
+- **Approve from wherever you are.** A push with Approve and Deny, a review sheet in the app, or the terminal.
+- **Touch ID on this Mac.** `arc approvals enroll-mac` lets you approve writes here with Touch ID. Destructive changes always go to your phone.
+- **A tamper-evident timeline.** `arc activity` shows what every agent did, day by day, and checks the server's hash chain so a rewritten history shows up as one. The same timeline is in the app.
+- **Each agent is named.** Calls are tagged with the agent that made them (Claude Code, Codex, Cursor, Gemini CLI and so on, detected automatically, or set with `--agent` / `ARC_AGENT`), so you can give each one its own permissions or block it.
+
+#### Agent Controls commands
+
+| Command | What it does |
+|---|---|
+| `arc auth pair <token>` | Pair this machine. `--agent <key>` names the agent, `--label` names the machine. |
+| `arc auth status` | Show whether this machine is paired, and with which fingerprint. |
+| `arc agents whoami [--agent <key>]` | What the current agent may do: runs, asks, or refused, per group and risk, plus any active time-limited approvals. |
+| `arc agents list` | The agents that have used arc on this machine, with how often they were asked or refused. |
+| `arc approvals list` | Requests waiting on you. |
+| `arc approvals show <id>` | One request in full. |
+| `arc approvals approve <id> [--scope once\|15m\|60m\|always]` | Approve with Touch ID on this Mac (writes only; needs `enroll-mac`). |
+| `arc approvals deny <id>` | Refuse a request. |
+| `arc approvals wait <id>` | Wait for a decision, then run the approved call exactly once. |
+| `arc approvals enroll-mac` | Set up Touch ID approval on this Mac. You confirm it on your phone. |
+| `arc activity [--agent <key>] [--since 2h\|3d\|2026-10-01] [--limit N] [--follow] [--json]` | The timeline of what agents did, with the chain check. |
+
+#### How a waiting call behaves
+
+- **In a terminal**, a command that needs approval shows a spinner and waits for your phone; press `t` to approve with Touch ID on an enrolled Mac, or Ctrl-C to cancel.
+- **Without a terminal** (an agent running the CLI), it waits up to 90 seconds (`ARC_APPROVAL_WAIT_SECONDS` changes this), then exits **75** with JSON naming the request. `arc approvals wait <id>` finishes it. A denial exits **77**, and nothing was changed.
+- **Over MCP**, a tool waits up to 45 seconds, then returns `{"status": "pending_approval", "request_id": "…"}`. The agent calls `arc_agent_request_status` to finish it; the approved call runs exactly once. `arc_agent_permissions` lets an agent check up front what will need you. No tool can approve or deny anything.
+- **Offline**, a paired machine uses its last known permissions: allowed reads keep working for a day and allowed writes for 15 minutes, while anything that asks, anything destructive, and anything with no cached permissions is refused.
+
+Once paired, enforcement cannot be switched off from this machine, and nothing on it can change your permissions: those live on your phone.
 
 ### Agent Install Matrix
 
@@ -63,7 +93,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 92 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 108 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -124,8 +154,9 @@ arc update           # install it
 
 `arc update` re-runs the published installer, so it refreshes the app snapshot,
 the launcher, the agent skill files and the Claude Desktop MCP entry in one go.
-Your config and credentials in `~/.arc-cli/config.json` are left alone — only
-`~/.arc-cli/app` is replaced.
+Your config and credentials are left alone (in `~/.arc-cli/config.json`, or in
+the Keychain / Secret Service on a paired machine) — only `~/.arc-cli/app` is
+replaced. Updating never pairs a machine or moves its secrets.
 
 Restart any running `arc mcp` server afterwards so it picks up the new tools.
 
@@ -136,7 +167,7 @@ above; running it again is always safe.
 
 - macOS-first installer (Linux works for the CLI; the Claude Desktop merge step is a no-op elsewhere).
 - `--pair` install commands carry only a short-lived pairing token; credentials arrive sealed to this machine after you approve it with Face ID.
-- Legacy payload-backed install commands embed credentials. Only run them on trusted machines.
+- Payload install commands (`--payload`) embed credentials. Only run them on trusted machines.
 - On a paired machine the Actual password and per-budget encryption passwords live in the macOS Keychain or the Linux Secret Service, not in `config.json`; pairing moves them there. Unpaired installs keep them where they always were, so updating changes nothing until you pair. With no Secret Service (a headless Linux server), they stay in `config.json` and arc says so once.
 - Agent Controls stops agents from doing what you did not allow through arc's CLI, MCP and TUI. It does not stop a hostile program running as you from reading the Keychain directly.
 
@@ -147,7 +178,7 @@ above; running it again is always safe.
 
 Arc exposes the commands below both as CLI subcommands and as MCP tools (`arc mcp`). Every entry is generated from the single operation registry, so the CLI, MCP, and docs always match.
 
-**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Unpaired installs run everything and keep a local log only.
+**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Installs set up with the app's payload command (not paired) run everything and keep a local log only.
 
 ## Accounts
 
@@ -187,6 +218,12 @@ Manage on- and off-budget accounts and balances.
 
   ```bash
   arc accounts reopen --id 'Old Card'
+  ```
+
+- **`arc accounts reconcile`** — Reconcile an account against the bank balance, as Actual's 'Done reconciling' does. Refuses, writing nothing, while the cleared balance differs from the bank and reports the difference. Once they agree, it locks every cleared transaction as reconciled and stamps the account's last-reconciled time. _Approval: asks · destructive._
+
+  ```bash
+  arc accounts reconcile --account 'Chase Checking' --balance 1240.55
   ```
 
 - **`arc accounts delete`** — Permanently delete an account. Destructive — prefer close in most cases. _(advanced)_ _Approval: asks · destructive._
@@ -259,6 +296,12 @@ Create, update, split, transfer, and batch-process transactions.
   arc transactions refunds
   ```
 
+- **`arc transactions duplicates`** — Find transactions that look like the same purchase recorded twice: same account, same sign, dated within a couple of days, with a matching amount and merchant (or an FX estimate next to the bank's posting). Returns groups with a 0-100 score and the reasons. Transfers and split legs are never flagged. _Approval: runs._
+
+  ```bash
+  arc transactions duplicates
+  ```
+
 - **`arc transactions batch-update`** — Apply field updates to many transactions in one call. Accepts a JSON array of {id, ...fields}. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
@@ -279,7 +322,7 @@ Create, update, split, transfer, and batch-process transactions.
 
 ## Categories
 
-Manage category groups and individual categories.
+Manage category groups and individual categories, and the sinking-fund savings targets (`#template … by YYYY-MM` + `#goal`) Actual keeps in each category's note.
 
 - **`arc categories list`** — List all category groups and their categories. _Approval: runs._
 
@@ -299,10 +342,46 @@ Manage category groups and individual categories.
   arc categories update --id 'Coffee' --group 'Dining'
   ```
 
+- **`arc categories templates`** — List categories whose note carries Actual budget templates (`#template` / `#goal`), with the sinking-fund savings target arc can edit and whether the note is editable from arc. Amounts are integer minor units. _Approval: runs._
+
+  ```bash
+  arc categories templates
+  ```
+
+- **`arc categories template-set`** — Set a sinking-fund savings target on a category: writes `#template <amount> by <YYYY-MM> [repeat every …]` plus a `#goal <amount>` line into the category note, exactly as the arc app's Savings target editor does. Other lines in the note are kept byte-for-byte. Refused when the note holds a template arc will not rewrite (prioritized, several sinking templates, or a non-sinking form) — edit those in Actual. _Approval: asks._
+
+  ```bash
+  arc categories template-set --category 'Gifts' --target 500 --by 2026-12 --repeat-months 12
+  ```
+
+- **`arc categories template-clear`** — Remove the sinking-fund savings target arc manages from a category note (its `#template … by` line and the `#goal` line directly beneath). Prose and every other directive are left byte-for-byte. _Approval: asks._
+
+  ```bash
+  arc categories template-clear --category 'Gifts'
+  ```
+
+- **`arc categories group-create`** — Create a new category group. _Approval: asks._
+
+  ```bash
+  arc categories group-create --name 'Travel'
+  ```
+
+- **`arc categories group-update`** — Rename a category group or toggle it hidden. _Approval: asks._
+
+  ```bash
+  arc categories group-update --id 'Travel' --name 'Trips'
+  ```
+
 - **`arc categories delete`** — Delete a category, optionally transferring its transactions and budget to another category. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc categories delete --id 'Old' --transfer-to 'New'
+  ```
+
+- **`arc categories group-delete`** — Delete a category group and its categories, optionally moving their transactions and budget to a category in another group. _(advanced)_ _Approval: asks · destructive._
+
+  ```bash
+  arc categories group-delete --id 'Old group' --transfer-to 'Groceries'
   ```
 
 ## Payees
@@ -627,6 +706,24 @@ Track investment holdings and trade activity (read-only). Investment data lives 
   arc portfolio accounts
   ```
 
+- **`arc portfolio realized`** — Realized P/L from the app's closed-trade history (#trades:v1 notes) — win/loss stats, profit factor, and net realized by symbol, by month or year, and by account. _Approval: runs._
+
+  ```bash
+  arc portfolio realized
+  ```
+
+- **`arc portfolio dividends`** — Dividends received, from the app's dividend history (#divs:v1 notes) — every payment plus totals by symbol, by year, and by account. _Approval: runs._
+
+  ```bash
+  arc portfolio dividends
+  ```
+
+- **`arc portfolio history`** — Daily portfolio value series from the app's month-sharded position history (#pfhist:v1 notes), summed across accounts, with per-account latest value and top movers. _Approval: runs._
+
+  ```bash
+  arc portfolio history
+  ```
+
 ## Goals
 
 Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.
@@ -685,6 +782,28 @@ Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, 
   arc goals delete --goal 'Japan trip'
   ```
 
+## Debts
+
+Credit cards, loans and EMIs with a monthly due day. A debt is an ordinary account whose note carries a `#debt|due:N` line — the same line the arc app reads to schedule its payment reminders, so a due day set here reminds you on your phone.
+
+- **`arc debts list`** — List accounts marked as debts (credit cards, loans, EMIs) with their monthly due day, days until the next due date, and current balance. Soonest due first. _Approval: runs._
+
+  ```bash
+  arc debts list
+  ```
+
+- **`arc debts set`** — Mark an account as a debt with a monthly payment due day, or change its due day. Writes `#debt|due:N` into the account note (other note content is kept); the arc app uses it for payment reminders. _Approval: asks._
+
+  ```bash
+  arc debts set --account 'Amex' --due 15
+  ```
+
+- **`arc debts clear`** — Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance and its transactions are untouched. _Approval: asks._
+
+  ```bash
+  arc debts clear --account 'Amex'
+  ```
+
 ## Group Splits
 
 Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
@@ -729,6 +848,22 @@ Share a transaction with other people and track what they owe you. Splits are a 
 
   ```bash
   arc splits delete --gid ab12cd
+  ```
+
+## Reconcile
+
+Check a bank statement (CSV or JSON) against an account's transactions: what matches, what the ledger is missing, what the bank never saw, and where the amounts disagree. Uses the same matching as the arc app's statement import, so fuzzy merchant names, posting-date drift and FX estimates line up. Statement amounts are signed from the account holder's side (negative = money out).
+
+- **`arc reconcile statement`** — Compare a bank statement against an account. Each line comes back matched (exact, or a fuzzy merchant/date match), missing from the ledger, an amount mismatch, or ambiguous, and ledger rows in the statement's date range that no line explains come back as extra. Optionally checks the opening and closing balances. Changes nothing. _Approval: runs._
+
+  ```bash
+  arc reconcile statement --account 'Chase Checking' --file ~/Downloads/may.csv
+  ```
+
+- **`arc reconcile apply`** — Apply a statement: import the lines the ledger is missing (cleared, with a deterministic imported_id so a re-run adds nothing) and mark matched transactions cleared. Amount mismatches and ambiguous matches are reported and left alone. Run `arc reconcile statement` first to see what it will do. _(advanced)_ _Approval: asks · destructive._
+
+  ```bash
+  arc reconcile apply --account 'Chase Checking' --file ~/Downloads/may.csv
   ```
 
 ## Server

@@ -45,6 +45,10 @@ import { normalizeRulePayload, normalizeSchedulePayload, isLikelyUuid } from '..
 import * as accountOps from '../operations/accounts.js';
 import * as transactionOps from '../operations/transactions.js';
 import * as categoryOps from '../operations/categories.js';
+import * as reconcileOps from '../operations/reconciliation.js';
+import * as debtOps from '../operations/debts.js';
+import * as categoryTemplateOps from '../operations/category-templates.js';
+import { flagsForClearedState } from '../codecs/cleared-status.js';
 import * as payeeOps from '../operations/payees.js';
 import * as ruleOps from '../operations/rules.js';
 import * as scheduleOps from '../operations/schedules.js';
@@ -52,6 +56,7 @@ import * as budgetOps from '../operations/budgets.js';
 import * as queryOps from '../operations/queries.js';
 import * as tagOps from '../operations/tags.js';
 import * as portfolioOps from '../operations/portfolio.js';
+import * as portfolioHistoryOps from '../operations/portfolio-history.js';
 import * as goalOps from '../operations/goals.js';
 import * as splitOps from '../operations/splits.js';
 import * as serverOps from '../operations/server.js';
@@ -119,6 +124,26 @@ async function resolveCategoryIdFromName(
   nameOrId: string
 ): Promise<string> {
   return categoryOps.resolveCategoryId(client, nameOrId);
+}
+
+async function statementInputFromArgs(
+  client: ActualClient,
+  args: Record<string, any>
+): Promise<reconcileOps.StatementInput> {
+  const accountId = await accountOps.resolveAccountId(client, args.account);
+  const parsed = reconcileOps.loadStatement({
+    file: args.file,
+    lines: args.lines,
+    dateFormat: args.date_format,
+    invert: args.invert,
+  });
+  return {
+    accountId,
+    lines: parsed.lines,
+    windowDays: args.window_days,
+    openingBalance: dollarsToCents(args.opening_balance) ?? parsed.openingBalance,
+    closingBalance: dollarsToCents(args.closing_balance) ?? parsed.closingBalance,
+  };
 }
 
 async function resolveOrCreatePayeeId(
@@ -226,7 +251,7 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   },
   arc_transactions_update: async (deps, args) => {
     const { client, writer } = deps;
-    const { id, amount, date, notes, cleared, category, payee } = args;
+    const { id, amount, date, notes, cleared, status, category, payee } = args;
     const addTag = (args as any)['add-tag'];
     const removeTag = (args as any)['remove-tag'];
     const fields: Record<string, unknown> = {};
@@ -234,6 +259,7 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     if (date != null) fields.date = date;
     if (notes != null) fields.notes = notes;
     if (cleared != null) fields.cleared = cleared;
+    if (status != null) Object.assign(fields, flagsForClearedState(status));
     if (category != null) fields.category = await resolveCategoryIdFromName(client, category);
     if (payee != null) fields.payee = await resolveOrCreatePayeeId(deps, payee);
     await transactionOps.updateTransaction(client, writer, id, fields as any);
@@ -386,6 +412,47 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
       : undefined;
     await categoryOps.deleteCategory(client, writer, categoryId, transferId);
     return { id: categoryId };
+  },
+  arc_categories_templates: async ({ client }) =>
+    categoryTemplateOps.listTemplates(client),
+  arc_categories_template_set: async ({ client, writer }, args) =>
+    categoryTemplateOps.setTemplate(
+      client,
+      writer,
+      await categoryOps.resolveCategoryId(client, args.category),
+      {
+        targetCents: dollarsToCents(args.target)!,
+        byMonth: args.by,
+        repeatEveryMonths: args.repeat_months ?? null,
+        emitGoal: args.emit_goal,
+      }
+    ),
+  arc_categories_template_clear: async ({ client, writer }, { category }) =>
+    categoryTemplateOps.clearTemplate(
+      client,
+      writer,
+      await categoryOps.resolveCategoryId(client, category)
+    ),
+
+  arc_categories_group_create: async ({ client, writer }, { name, income }) => {
+    const id = await categoryOps.createCategoryGroup(client, writer, name, income);
+    return { id };
+  },
+  arc_categories_group_update: async ({ client, writer }, { id, name, hidden }) => {
+    const groupId = await categoryOps.resolveCategoryGroupIdExact(client, id);
+    const fields: Record<string, unknown> = {};
+    if (name != null) fields.name = name;
+    if (hidden != null) fields.hidden = hidden;
+    await categoryOps.updateCategoryGroup(client, writer, groupId, fields as any);
+    return { id: groupId };
+  },
+  arc_categories_group_delete: async ({ client, writer }, { id, transfer_to }) => {
+    const groupId = await categoryOps.resolveCategoryGroupIdExact(client, id);
+    const transferId = transfer_to
+      ? await categoryOps.resolveCategoryId(client, transfer_to)
+      : undefined;
+    await categoryOps.deleteCategoryGroup(client, writer, groupId, transferId);
+    return { id: groupId };
   },
 
   // payees ───────────────────────────────────────────────────────────────────
@@ -594,6 +661,21 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   },
   arc_portfolio_summary: async ({ client }) => portfolioOps.getSummary(client),
   arc_portfolio_accounts: async ({ client }) => portfolioOps.getPortfolioAccounts(client),
+  arc_portfolio_realized: async ({ client }, { account, from, to, period }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return portfolioHistoryOps.realized(client, { account: accountId, from, to, period });
+  },
+  arc_portfolio_dividends: async ({ client }, { account, from, to }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return portfolioHistoryOps.dividends(client, { account: accountId, from, to });
+  },
+  arc_portfolio_history: async ({ client }, { account, from, to }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return portfolioHistoryOps.history(client, { account: accountId, from, to });
+  },
 
   // goals (savings goals stored as `#goal:` account-note tags) ────────────────
   arc_goals_list: async ({ client }, { archived }) =>
@@ -630,6 +712,15 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     goalOps.reopenGoal(client, writer, goal),
   arc_goals_delete: async ({ client, writer }, { goal }) =>
     goalOps.deleteGoal(client, writer, goal),
+
+  // debts (credit cards / loans stored as `#debt|` account-note tags) ────────
+  arc_debts_list: async ({ client }) => debtOps.listDebts(client),
+  arc_debts_set: async ({ client, writer }, { account, due }) =>
+    debtOps.setDebt(client, writer, await accountOps.resolveAccountId(client, account), {
+      dueDay: due,
+    }),
+  arc_debts_clear: async ({ client, writer }, { account }) =>
+    debtOps.clearDebt(client, writer, await accountOps.resolveAccountId(client, account)),
 
   // splits (group splits stored as `#gsplit|` transaction-note tokens) ────────
   arc_splits_list: async ({ client }, { person, open, start, end }) =>
@@ -671,6 +762,24 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     let accountId: string | undefined;
     if (account) accountId = await accountOps.resolveAccountId(client, account);
     return transactionOps.listRefunds(client, { account: accountId, start, end });
+  },
+  // reconcile: statements, duplicates, account lock ───────────────────────────
+  arc_reconcile_statement: async ({ client }, args) =>
+    reconcileOps.statement(client, await statementInputFromArgs(client, args)),
+  arc_reconcile_apply: async ({ client, writer }, args) =>
+    reconcileOps.applyStatement(client, writer, await statementInputFromArgs(client, args)),
+  arc_transactions_duplicates: async ({ client }, { account, since, window_days, min_score }) => {
+    let accountId: string | undefined;
+    if (account) accountId = await accountOps.resolveAccountId(client, account);
+    return reconcileOps.duplicates(client, { accountId, since, windowDays: window_days, minScore: min_score });
+  },
+  arc_accounts_reconcile: async ({ client, writer }, { account, balance, date }) => {
+    const accountId = await accountOps.resolveAccountId(client, account);
+    return reconcileOps.reconcileAccount(client, writer, {
+      accountId,
+      statementBalanceCents: dollarsToCents(balance)!,
+      date,
+    });
   },
 
   // agent controls ───────────────────────────────────────────────────────────
@@ -748,6 +857,8 @@ export function resolveExposure(env: NodeJS.ProcessEnv = process.env): McpExposu
  * their description at registration time.
  */
 const AMOUNT_BEARING_GROUPS = new Set<PublicOperation['group']>([
+  'reconcile',
+  'debts',
   'accounts',
   'transactions',
   'budgets',
@@ -982,6 +1093,9 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
             } as McpHandlerDeps;
             return { content: [{ type: 'text' as const, text: jsonText(await handler(agentDeps, args)) }] };
           }
+
+          // A statement file is read now, so the approval binds its contents.
+          if (op.group === 'reconcile') reconcileOps.inlineStatementFile(args);
 
           // The choke point: nothing below runs until Agent Controls says so.
           const outcome = await runGated({

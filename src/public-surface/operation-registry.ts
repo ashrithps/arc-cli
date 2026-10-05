@@ -54,6 +54,33 @@ const jsonFlag = z
   .optional()
   .describe("Return raw JSON instead of formatted output.");
 
+const statementLine = z.object({
+  date: dateStr,
+  amount: amountNumber.describe(
+    "Signed amount in major units from the account holder's side: negative = money out, positive = money in."
+  ),
+  payee: z.string().optional().describe("Merchant / counterparty as the bank prints it."),
+  description: z.string().optional().describe("Free-text description or memo."),
+  id: z.string().optional().describe("The bank's own id for the line (FITID / reference). Makes re-imports dedupe exactly."),
+});
+
+const statementSource = {
+  account: accountRef,
+  file: z
+    .string()
+    .optional()
+    .describe("Path to a CSV or JSON statement on this machine. CSV needs a date column plus `amount` or `debit`/`credit`. Pass this or `lines`."),
+  lines: z.array(statementLine).optional().describe("Statement lines inline. Pass this or `file`."),
+  date_format: z
+    .enum(["ymd", "dmy", "mdy"])
+    .optional()
+    .describe("How to read dates like 03/04/2026. Detected when the file makes it unambiguous."),
+  invert: z.boolean().optional().describe("Flip every amount, for card statements that print purchases as positive."),
+  window_days: z.number().int().min(0).max(10).optional().describe("Days a posting date may drift from the ledger date. Default 2."),
+  opening_balance: amountNumber.optional().describe("Statement opening balance in major units, checked against the ledger the day before the first line."),
+  closing_balance: amountNumber.optional().describe("Statement closing balance in major units, checked against the ledger on the last line's date."),
+};
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
@@ -240,6 +267,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
       "arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'",
       "arc transactions update --id <txn-id> --add-tag Quantini",
       "arc transactions update --id <txn-id> --remove-tag 'OldTag,Stale'",
+      "arc transactions update --id <txn-id> --status reconciled",
     ],
     inputSchema: {
       id: z.string().describe("Transaction id (UUID)."),
@@ -247,6 +275,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
       date: dateStr.optional(),
       notes: z.string().optional(),
       cleared: z.boolean().optional(),
+      status: z.enum(["pending", "cleared", "reconciled"]).optional().describe("Three-state settlement: pending, cleared, or reconciled (locks the row, as a reconciliation does). Overrides `cleared`."),
       category: categoryRef.optional(),
       payee: payeeRef.optional(),
       "add-tag": z.string().optional().describe("Comma-separated tags to append to the transaction's notes."),
@@ -421,6 +450,109 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     inputSchema: {
       id: categoryRef,
       transfer_to: categoryRef.optional(),
+    },
+    defaultExposure: "advanced",
+  },
+  {
+    id: "categories.templates",
+    group: "categories",
+    subcommand: "templates",
+    mcpTool: "arc_categories_templates",
+    mode: "read",
+    risk: "read",
+    description:
+      "List categories whose note carries Actual budget templates (`#template` / `#goal`), with the sinking-fund savings target arc can edit and whether the note is editable from arc. Amounts are integer minor units.",
+    examples: ["arc categories templates", "arc categories templates --json"],
+    inputSchema: { json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
+    id: "categories.template-set",
+    group: "categories",
+    subcommand: "template-set",
+    mcpTool: "arc_categories_template_set",
+    mode: "write",
+    risk: "write",
+    description:
+      "Set a sinking-fund savings target on a category: writes `#template <amount> by <YYYY-MM> [repeat every …]` plus a `#goal <amount>` line into the category note, exactly as the arc app's Savings target editor does. Other lines in the note are kept byte-for-byte. Refused when the note holds a template arc will not rewrite (prioritized, several sinking templates, or a non-sinking form) — edit those in Actual.",
+    examples: [
+      "arc categories template-set --category 'Gifts' --target 500 --by 2026-12 --repeat-months 12",
+      "arc categories template-set --category 'Car insurance' --target 900 --by 2027-03",
+    ],
+    inputSchema: {
+      category: categoryRef,
+      target: amountNumber.describe("Amount to have saved by the target month, in major units (e.g. 500). Must be positive."),
+      by: monthStr.describe("Month the money is needed by (YYYY-MM)."),
+      repeat_months: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Repeat the target every N months after it falls due (12 = every year). Omit for a one-off target."),
+      emit_goal: z
+        .boolean()
+        .optional()
+        .describe("Also write the companion `#goal` line so Actual judges the category on its balance. Default true, as the app does."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "categories.template-clear",
+    group: "categories",
+    subcommand: "template-clear",
+    mcpTool: "arc_categories_template_clear",
+    mode: "write",
+    risk: "write",
+    description:
+      "Remove the sinking-fund savings target arc manages from a category note (its `#template … by` line and the `#goal` line directly beneath). Prose and every other directive are left byte-for-byte.",
+    examples: ["arc categories template-clear --category 'Gifts'"],
+    inputSchema: { category: categoryRef },
+    defaultExposure: "default",
+  },
+
+  {
+    id: "categories.group-create",
+    group: "categories",
+    subcommand: "group-create",
+    mcpTool: "arc_categories_group_create",
+    mode: "write",
+    risk: "write",
+    description: "Create a new category group.",
+    examples: ["arc categories group-create --name 'Travel'", "arc categories group-create --name 'Side income' --income"],
+    inputSchema: {
+      name: z.string(),
+      income: z.boolean().optional().describe("Make it an income group."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "categories.group-update",
+    group: "categories",
+    subcommand: "group-update",
+    mcpTool: "arc_categories_group_update",
+    mode: "write",
+    risk: "write",
+    description: "Rename a category group or toggle it hidden.",
+    examples: ["arc categories group-update --id 'Travel' --name 'Trips'"],
+    inputSchema: {
+      id: z.string().describe("Category group name or id (exact)."),
+      name: z.string().optional(),
+      hidden: z.boolean().optional(),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "categories.group-delete",
+    group: "categories",
+    subcommand: "group-delete",
+    mcpTool: "arc_categories_group_delete",
+    mode: "write",
+    risk: "destructive",
+    description: "Delete a category group and its categories, optionally moving their transactions and budget to a category in another group.",
+    examples: ["arc categories group-delete --id 'Old group' --transfer-to 'Groceries'"],
+    inputSchema: {
+      id: z.string().describe("Category group name or id (exact)."),
+      transfer_to: categoryRef.optional().describe("Category that receives the deleted categories' transactions and budget."),
     },
     defaultExposure: "advanced",
   },
@@ -1174,6 +1306,59 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     defaultExposure: "default",
   },
 
+  {
+    id: "portfolio.realized",
+    group: "portfolio",
+    subcommand: "realized",
+    mcpTool: "arc_portfolio_realized",
+    mode: "read",
+    risk: "read",
+    description: "Realized P/L from the app's closed-trade history (#trades:v1 notes) — win/loss stats, profit factor, and net realized by symbol, by month or year, and by account.",
+    examples: ["arc portfolio realized", "arc portfolio realized --from 2026-01-01 --period year --json"],
+    inputSchema: {
+      account: accountRef.optional(),
+      from: dateStr.optional(),
+      to: dateStr.optional(),
+      period: z.enum(["month", "year"]).optional().describe("Bucket size for the by-period breakdown (default month)."),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "portfolio.dividends",
+    group: "portfolio",
+    subcommand: "dividends",
+    mcpTool: "arc_portfolio_dividends",
+    mode: "read",
+    risk: "read",
+    description: "Dividends received, from the app's dividend history (#divs:v1 notes) — every payment plus totals by symbol, by year, and by account.",
+    examples: ["arc portfolio dividends", "arc portfolio dividends --from 2026-01-01 --to 2026-12-31 --json"],
+    inputSchema: {
+      account: accountRef.optional(),
+      from: dateStr.optional(),
+      to: dateStr.optional(),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "portfolio.history",
+    group: "portfolio",
+    subcommand: "history",
+    mcpTool: "arc_portfolio_history",
+    mode: "read",
+    risk: "read",
+    description: "Daily portfolio value series from the app's month-sharded position history (#pfhist:v1 notes), summed across accounts, with per-account latest value and top movers.",
+    examples: ["arc portfolio history", "arc portfolio history --account 'IBKR' --from 2026-06-01 --json"],
+    inputSchema: {
+      account: accountRef.optional(),
+      from: dateStr.optional(),
+      to: dateStr.optional(),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+
   // ── goals ──────────────────────────────────────────────────────────────────
   {
     id: "goals.list",
@@ -1335,6 +1520,53 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     examples: ["arc goals delete --goal 'Japan trip'"],
     inputSchema: { goal: goalRef },
     defaultExposure: "advanced",
+  },
+
+  // ── debts ─────────────────────────────────────────────────────────────────
+  {
+    id: "debts.list",
+    group: "debts",
+    subcommand: "list",
+    mcpTool: "arc_debts_list",
+    mode: "read",
+    risk: "read",
+    description:
+      "List accounts marked as debts (credit cards, loans, EMIs) with their monthly due day, days until the next due date, and current balance. Soonest due first.",
+    examples: ["arc debts list", "arc debts list --json"],
+    inputSchema: { json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
+    id: "debts.set",
+    group: "debts",
+    subcommand: "set",
+    mcpTool: "arc_debts_set",
+    mode: "write",
+    risk: "write",
+    description:
+      "Mark an account as a debt with a monthly payment due day, or change its due day. Writes `#debt|due:N` into the account note (other note content is kept); the arc app uses it for payment reminders.",
+    examples: [
+      "arc debts set --account 'Amex' --due 15",
+      "arc debts set --account 'Car loan' --due 5",
+    ],
+    inputSchema: {
+      account: accountRef,
+      due: z.number().int().min(1).max(31).describe("Day of the month the payment is due, 1-31."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "debts.clear",
+    group: "debts",
+    subcommand: "clear",
+    mcpTool: "arc_debts_clear",
+    mode: "write",
+    risk: "write",
+    description:
+      "Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance and its transactions are untouched.",
+    examples: ["arc debts clear --account 'Amex'"],
+    inputSchema: { account: accountRef },
+    defaultExposure: "default",
   },
 
   // ── splits ─────────────────────────────────────────────────────────────────
@@ -1504,6 +1736,82 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
       account: accountRef.optional(),
       start: dateStr.optional(),
       end: dateStr.optional(),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+
+  // ── reconcile (statement ↔ ledger) ───────────────────────────────────────────
+  {
+    id: "reconcile.statement",
+    group: "reconcile",
+    subcommand: "statement",
+    mcpTool: "arc_reconcile_statement",
+    mode: "read",
+    risk: "read",
+    description:
+      "Compare a bank statement against an account. Each line comes back matched (exact, or a fuzzy merchant/date match), missing from the ledger, an amount mismatch, or ambiguous, and ledger rows in the statement's date range that no line explains come back as extra. Optionally checks the opening and closing balances. Changes nothing.",
+    examples: [
+      "arc reconcile statement --account 'Chase Checking' --file ~/Downloads/may.csv",
+      "arc reconcile statement --account 'Amex' --file may.csv --invert --closing-balance -1243.18 --json",
+    ],
+    inputSchema: { ...statementSource, json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
+    id: "reconcile.apply",
+    group: "reconcile",
+    subcommand: "apply",
+    mcpTool: "arc_reconcile_apply",
+    mode: "write",
+    risk: "destructive",
+    description:
+      "Apply a statement: import the lines the ledger is missing (cleared, with a deterministic imported_id so a re-run adds nothing) and mark matched transactions cleared. Amount mismatches and ambiguous matches are reported and left alone. Run `arc reconcile statement` first to see what it will do.",
+    examples: [
+      "arc reconcile apply --account 'Chase Checking' --file ~/Downloads/may.csv",
+    ],
+    inputSchema: { ...statementSource, json: jsonFlag },
+    defaultExposure: "advanced",
+  },
+  {
+    id: "transactions.duplicates",
+    group: "transactions",
+    subcommand: "duplicates",
+    mcpTool: "arc_transactions_duplicates",
+    mode: "read",
+    risk: "read",
+    description:
+      "Find transactions that look like the same purchase recorded twice: same account, same sign, dated within a couple of days, with a matching amount and merchant (or an FX estimate next to the bank's posting). Returns groups with a 0-100 score and the reasons. Transfers and split legs are never flagged.",
+    examples: [
+      "arc transactions duplicates",
+      "arc transactions duplicates --account 'Chase Checking' --since 2026-01-01 --json",
+    ],
+    inputSchema: {
+      account: accountRef.optional(),
+      since: dateStr.optional().describe("Only look at transactions on or after this date. Default: 90 days ago."),
+      window_days: z.number().int().min(0).max(10).optional().describe("Max days apart for two rows to pair. Default 2."),
+      min_score: z.number().min(0).max(100).optional().describe("Drop groups scoring below this. Default 60."),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "accounts.reconcile",
+    group: "accounts",
+    subcommand: "reconcile",
+    mcpTool: "arc_accounts_reconcile",
+    mode: "write",
+    risk: "destructive",
+    description:
+      "Reconcile an account against the bank balance, as Actual's 'Done reconciling' does. Refuses, writing nothing, while the cleared balance differs from the bank and reports the difference. Once they agree, it locks every cleared transaction as reconciled and stamps the account's last-reconciled time.",
+    examples: [
+      "arc accounts reconcile --account 'Chase Checking' --balance 1240.55",
+      "arc accounts reconcile --account 'Amex' --balance -812.40 --date 2026-05-31",
+    ],
+    inputSchema: {
+      account: accountRef,
+      balance: amountNumber.describe("The balance the bank shows, in major units. Negative for money owed on a card."),
+      date: dateStr.optional().describe("Statement date: only cleared transactions on or before it count and get locked."),
       json: jsonFlag,
     },
     defaultExposure: "default",

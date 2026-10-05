@@ -34,6 +34,7 @@ import {
 import { migrateSecretsToKeychain, SECRET_KEYS, wipeActualSecrets } from './credentials.js';
 import { getKeychain } from './keychain.js';
 import { FINGERPRINT_WORDS } from './fingerprint-words.js';
+import { inlineStatementFile } from '../operations/reconciliation.js';
 import {
   AgentDeniedError,
   createGateRuntime,
@@ -73,8 +74,15 @@ const print = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 
 // ── unpaired banner ─────────────────────────────────────────────────────────
 
-/** One line on stderr, at most once a day, on an install with no enforcement. */
+/**
+ * One line on stderr, at most once a day, on an install with no enforcement.
+ *
+ * Off unless ARC_PAIR_BANNER=1: it points at **Connect a machine**, which only
+ * the next arc app release has. Until that ships, an unpaired install is the
+ * normal install and must print nothing new. ARC_NO_PAIR_BANNER still wins.
+ */
 export function maybeUnpairedBanner(env: NodeJS.ProcessEnv = process.env, now = Date.now()): void {
+  if (env.ARC_PAIR_BANNER !== '1') return;
   if (readConnectionState(env)?.status === 'active') return;
   if (env.ARC_NO_PAIR_BANNER) return;
   const stamp = agentPaths(env).bannerStamp;
@@ -83,7 +91,7 @@ export function maybeUnpairedBanner(env: NodeJS.ProcessEnv = process.env, now = 
     if (fs.readFileSync(stamp, 'utf8').trim() === today) return;
   } catch { /* first time */ }
   process.stderr.write(chalk.dim(
-    'arc: tip — with the latest arc app you can approve agent changes on your phone (Settings → AI agents → Connect a machine). Hide this: ARC_NO_PAIR_BANNER=1\n'
+    'arc: tip — the arc app can approve agent changes on your phone (Settings → AI agents → Connect a machine). Hide this: ARC_NO_PAIR_BANNER=1\n'
   ));
   try {
     fs.mkdirSync(agentPaths(env).home, { recursive: true });
@@ -112,6 +120,27 @@ export function resolveCliBudget(flags: Flags, env: NodeJS.ProcessEnv = process.
 // ── gate wrapper for CLI data commands ──────────────────────────────────────
 
 /**
+ * `arc reconcile … --file x.csv` → `--lines '<json>'`, in place, before the
+ * gate hashes the args. The approval (and a later `arc approvals wait`) then
+ * covers the statement's contents, and the run uses exactly those lines.
+ */
+export function inlineStatementFlags(parsed: ParsedCommand): void {
+  const f = parsed.flags;
+  if (!f.file || f.file === 'true') return;
+  const args = inlineStatementFile({
+    file: f.file,
+    date_format: f['date-format'] ?? f.date_format,
+    invert: f.invert,
+    opening_balance: f['opening-balance'] != null ? Number(f['opening-balance']) : undefined,
+    closing_balance: f['closing-balance'] != null ? Number(f['closing-balance']) : undefined,
+  } as Record<string, unknown>);
+  for (const k of ['file', 'date-format', 'date_format', 'invert']) delete f[k];
+  f.lines = JSON.stringify(args.lines);
+  if (args.opening_balance != null) f['opening-balance'] = String(args.opening_balance);
+  if (args.closing_balance != null) f['closing-balance'] = String(args.closing_balance);
+}
+
+/**
  * Run one CLI data command through the gate. Returns the exit code the
  * process should end with (0, 75 pending, 77 denied); command errors throw.
  */
@@ -122,6 +151,7 @@ export async function runCliGated(
   runtime: GateRuntime = createGateRuntime()
 ): Promise<number> {
   if (!runtime.connection && !runtime.credentialMissing) maybeUnpairedBanner(runtime.env, runtime.now());
+  if (op.group === 'reconcile') inlineStatementFlags(parsed);
   const interactive = isInteractive();
   const wait = interactive
     ? ttyWait({ touchId: touchIdFor(runtime) })

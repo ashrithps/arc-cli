@@ -4,13 +4,15 @@
 # Basic:
 #   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 #
-# Pair this machine with the arc app (Agent Controls — approvals on your phone):
-#   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- \
-#     --pair <token> --agent claude-code
-#
-# Legacy one-command payload bootstrap (no approvals; kept for one release):
+# Install with the command from the arc app (Settings → AI agents). Works with
+# every arc app; pair later for approvals:
 #   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- \
 #     --payload '<json-payload>'
+#
+# Pair this machine with the arc app (Agent Controls — approvals on your phone;
+# needs an app with Settings → AI agents → Connect a machine):
+#   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- \
+#     --pair <token> --agent claude-code
 #
 # Source of truth: arc-cli-source/public/install.sh
 # scripts/publish-public.sh copies this file verbatim into arc-cli/install.sh.

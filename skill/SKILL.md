@@ -350,7 +350,7 @@ Arc's data-operation surface is exposed identically through the CLI and through 
 
 Each entry is tagged with its mode (`read` or `write`) and exposure tier. Tools tagged `(advanced)` are batch, destructive, or global-state operations; treat them as opt-in and double-check inputs before calling.
 
-**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Unpaired installs run everything and keep a local log only.
+**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Installs set up with the app's payload command (not paired) run everything and keep a local log only.
 
 When a call needs approval, the tool waits up to 45 seconds. If the user has not decided by then it returns `{"status": "pending_approval", "request_id": …}` — not an error. Tell the user it is waiting on their phone, then call `arc_agent_request_status` with that `request_id`; it runs the approved call exactly once and returns its result. A denied call returns an error: do not retry it or look for another tool that does the same thing.
 
@@ -426,6 +426,18 @@ arc accounts close --id 'Old Card' --transfer-to 'New Card'
 arc accounts reopen --id 'Old Card'
 ```
 
+### `arc accounts reconcile`
+
+- mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
+- mcp tool: `arc_accounts_reconcile`
+- Reconcile an account against the bank balance, as Actual's 'Done reconciling' does. Refuses, writing nothing, while the cleared balance differs from the bank and reports the difference. Once they agree, it locks every cleared transaction as reconciled and stamps the account's last-reconciled time.
+
+```bash
+arc accounts reconcile --account 'Chase Checking' --balance 1240.55
+arc accounts reconcile --account 'Amex' --balance -812.40 --date 2026-05-31
+```
+
 ### `arc accounts delete`
 
 - mode: **write** (advanced)
@@ -489,6 +501,7 @@ arc transactions import --account 'Card' '[{"date":"2026-04-01","amount":-1234,"
 arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'
 arc transactions update --id <txn-id> --add-tag Quantini
 arc transactions update --id <txn-id> --remove-tag 'OldTag,Stale'
+arc transactions update --id <txn-id> --status reconciled
 ```
 
 ### `arc transactions delete`
@@ -558,6 +571,18 @@ arc transactions refunds
 arc transactions refunds --start 2026-01-01 --json
 ```
 
+### `arc transactions duplicates`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_transactions_duplicates`
+- Find transactions that look like the same purchase recorded twice: same account, same sign, dated within a couple of days, with a matching amount and merchant (or an FX estimate next to the bank's posting). Returns groups with a 0-100 score and the reasons. Transfers and split legs are never flagged.
+
+```bash
+arc transactions duplicates
+arc transactions duplicates --account 'Chase Checking' --since 2026-01-01 --json
+```
+
 ### `arc transactions batch-update`
 
 - mode: **write** (advanced)
@@ -593,7 +618,7 @@ arc transactions batch-categorize --account 'Card' --payee 'starbucks' --categor
 
 ## Categories
 
-Manage category groups and individual categories.
+Manage category groups and individual categories, and the sinking-fund savings targets (`#template … by YYYY-MM` + `#goal`) Actual keeps in each category's note.
 
 ### `arc categories list`
 
@@ -629,6 +654,64 @@ arc categories create --name 'Coffee' --group 'Food'
 arc categories update --id 'Coffee' --group 'Dining'
 ```
 
+### `arc categories templates`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_categories_templates`
+- List categories whose note carries Actual budget templates (`#template` / `#goal`), with the sinking-fund savings target arc can edit and whether the note is editable from arc. Amounts are integer minor units.
+
+```bash
+arc categories templates
+arc categories templates --json
+```
+
+### `arc categories template-set`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_categories_template_set`
+- Set a sinking-fund savings target on a category: writes `#template <amount> by <YYYY-MM> [repeat every …]` plus a `#goal <amount>` line into the category note, exactly as the arc app's Savings target editor does. Other lines in the note are kept byte-for-byte. Refused when the note holds a template arc will not rewrite (prioritized, several sinking templates, or a non-sinking form) — edit those in Actual.
+
+```bash
+arc categories template-set --category 'Gifts' --target 500 --by 2026-12 --repeat-months 12
+arc categories template-set --category 'Car insurance' --target 900 --by 2027-03
+```
+
+### `arc categories template-clear`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_categories_template_clear`
+- Remove the sinking-fund savings target arc manages from a category note (its `#template … by` line and the `#goal` line directly beneath). Prose and every other directive are left byte-for-byte.
+
+```bash
+arc categories template-clear --category 'Gifts'
+```
+
+### `arc categories group-create`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_categories_group_create`
+- Create a new category group.
+
+```bash
+arc categories group-create --name 'Travel'
+arc categories group-create --name 'Side income' --income
+```
+
+### `arc categories group-update`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_categories_group_update`
+- Rename a category group or toggle it hidden.
+
+```bash
+arc categories group-update --id 'Travel' --name 'Trips'
+```
+
 ### `arc categories delete`
 
 - mode: **write** (advanced)
@@ -638,6 +721,17 @@ arc categories update --id 'Coffee' --group 'Dining'
 
 ```bash
 arc categories delete --id 'Old' --transfer-to 'New'
+```
+
+### `arc categories group-delete`
+
+- mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
+- mcp tool: `arc_categories_group_delete`
+- Delete a category group and its categories, optionally moving their transactions and budget to a category in another group.
+
+```bash
+arc categories group-delete --id 'Old group' --transfer-to 'Groceries'
 ```
 
 ## Payees
@@ -1225,6 +1319,42 @@ arc portfolio accounts
 arc portfolio accounts --json
 ```
 
+### `arc portfolio realized`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_portfolio_realized`
+- Realized P/L from the app's closed-trade history (#trades:v1 notes) — win/loss stats, profit factor, and net realized by symbol, by month or year, and by account.
+
+```bash
+arc portfolio realized
+arc portfolio realized --from 2026-01-01 --period year --json
+```
+
+### `arc portfolio dividends`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_portfolio_dividends`
+- Dividends received, from the app's dividend history (#divs:v1 notes) — every payment plus totals by symbol, by year, and by account.
+
+```bash
+arc portfolio dividends
+arc portfolio dividends --from 2026-01-01 --to 2026-12-31 --json
+```
+
+### `arc portfolio history`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_portfolio_history`
+- Daily portfolio value series from the app's month-sharded position history (#pfhist:v1 notes), summed across accounts, with per-account latest value and top movers.
+
+```bash
+arc portfolio history
+arc portfolio history --account 'IBKR' --from 2026-06-01 --json
+```
+
 ## Goals
 
 Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.
@@ -1333,6 +1463,45 @@ arc goals reopen --goal 'Japan trip'
 arc goals delete --goal 'Japan trip'
 ```
 
+## Debts
+
+Credit cards, loans and EMIs with a monthly due day. A debt is an ordinary account whose note carries a `#debt|due:N` line — the same line the arc app reads to schedule its payment reminders, so a due day set here reminds you on your phone.
+
+### `arc debts list`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_debts_list`
+- List accounts marked as debts (credit cards, loans, EMIs) with their monthly due day, days until the next due date, and current balance. Soonest due first.
+
+```bash
+arc debts list
+arc debts list --json
+```
+
+### `arc debts set`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_debts_set`
+- Mark an account as a debt with a monthly payment due day, or change its due day. Writes `#debt|due:N` into the account note (other note content is kept); the arc app uses it for payment reminders.
+
+```bash
+arc debts set --account 'Amex' --due 15
+arc debts set --account 'Car loan' --due 5
+```
+
+### `arc debts clear`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_debts_clear`
+- Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance and its transactions are untouched.
+
+```bash
+arc debts clear --account 'Amex'
+```
+
 ## Group Splits
 
 Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
@@ -1416,6 +1585,33 @@ arc splits remove --gid ab12cd --person Sam
 
 ```bash
 arc splits delete --gid ab12cd
+```
+
+## Reconcile
+
+Check a bank statement (CSV or JSON) against an account's transactions: what matches, what the ledger is missing, what the bank never saw, and where the amounts disagree. Uses the same matching as the arc app's statement import, so fuzzy merchant names, posting-date drift and FX estimates line up. Statement amounts are signed from the account holder's side (negative = money out).
+
+### `arc reconcile statement`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_reconcile_statement`
+- Compare a bank statement against an account. Each line comes back matched (exact, or a fuzzy merchant/date match), missing from the ledger, an amount mismatch, or ambiguous, and ledger rows in the statement's date range that no line explains come back as extra. Optionally checks the opening and closing balances. Changes nothing.
+
+```bash
+arc reconcile statement --account 'Chase Checking' --file ~/Downloads/may.csv
+arc reconcile statement --account 'Amex' --file may.csv --invert --closing-balance -1243.18 --json
+```
+
+### `arc reconcile apply`
+
+- mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
+- mcp tool: `arc_reconcile_apply`
+- Apply a statement: import the lines the ledger is missing (cleared, with a deterministic imported_id so a re-run adds nothing) and mark matched transactions cleared. Amount mismatches and ambiguous matches are reported and left alone. Run `arc reconcile statement` first to see what it will do.
+
+```bash
+arc reconcile apply --account 'Chase Checking' --file ~/Downloads/may.csv
 ```
 
 ## Server

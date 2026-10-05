@@ -578,7 +578,7 @@ function refundReasonHelp(reason: string): string {
     case 'split':
       return 'Actual requires a split parent to equal the sum of its children.';
     case 'reconciled':
-      return 'Unlock it first with `arc reconcile unlock`.';
+      return 'Unlock it first with `arc transactions update --id <id> --status cleared`.';
     case 'already':
       return 'Use `arc transactions unrefund` to undo it.';
     case 'zero':

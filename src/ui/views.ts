@@ -302,16 +302,18 @@ export function printHelp() {
   console.log(cmd('mcp', 'Start the Arc MCP server over stdio'));
   console.log(cmd('accounts', 'List accounts with balances'));
   console.log(cmd('transactions', 'List/add/update/delete transactions'));
-  console.log(cmd('categories', 'List/manage categories'));
+  console.log(cmd('categories', 'List/manage categories and savings targets'));
   console.log(cmd('payees', 'List/manage payees'));
   console.log(cmd('tags', 'List/add/update/delete tags'));
   console.log(cmd('rules', 'List/manage rules'));
   console.log(cmd('schedules', 'List/manage schedules'));
   console.log(cmd('budgets', 'List/switch budgets and manage budget amounts'));
   console.log(cmd('query', 'Smart queries (spending, uncategorized)'));
-  console.log(cmd('portfolio', 'Investment holdings and trade activity (read-only)'));
+  console.log(cmd('portfolio', 'Holdings, trades, realized P/L, dividends, value history (read-only)'));
   console.log(cmd('goals', 'Savings goals — progress, contributions, deadlines'));
+  console.log(cmd('debts', 'Credit cards and loans — monthly due days for reminders'));
   console.log(cmd('splits', 'Group splits — share a cost, track who owes you'));
+  console.log(cmd('reconcile', 'Check a bank statement against an account; apply it'));
   console.log(cmd('backup', 'List/clean backups'));
   console.log(cmd('auth pair <token>', 'Pair this machine with the arc app (--agent, --label)'));
   console.log(cmd('auth status', 'Pairing, secrets storage and last contact'));
@@ -456,6 +458,107 @@ export function printPortfolioAccounts(accounts: any[]) {
   })));
 }
 
+function rangeLabel(from?: string, to?: string): string {
+  if (!from && !to) return '';
+  return ` · ${from ?? '…'} → ${to ?? 'today'}`;
+}
+
+export function printRealized(report: any, accountName?: string) {
+  console.log(header(`Realized P/L${accountName ? ' — ' + accountName : ''}${rangeLabel(report.from, report.to)}`));
+  if (report.trades.length === 0) {
+    console.log(`  ${colors.muted('No closed trades recorded. The arc app fills this in when a brokerage sync (e.g. IBKR Flex) imports trades.')}\n`);
+    return;
+  }
+  const s = report.stats;
+  console.log(row('Net realized', formatCurrency(s.netRealizedCents)));
+  console.log(row('Closed trades', `${s.totalTrades} (${s.winningTrades} won, ${s.losingTrades} lost, ${s.breakevenTrades} even)`));
+  console.log(row('Win rate', (s.winRate * 100).toFixed(1) + '%'));
+  console.log(row('Profit factor', s.profitFactor == null ? '∞' : s.profitFactor.toFixed(2)));
+  console.log(row('Edge', report.tier));
+  console.log(row('Avg winner / loser', `${formatCurrency(s.avgWinnerCents)} / ${formatCurrency(s.avgLoserCents)}`));
+  console.log(row('Largest gain / loss', `${formatCurrency(s.largestGainCents)} / ${formatCurrency(-s.largestLossCents)}`));
+  console.log(row('Fees', formatCurrency(s.totalFeesCents)));
+
+  const groupRows = (groups: any[], label: string) => groups.map((g: any) => ({
+    [label]: g.key || '—',
+    closed: g.closed,
+    'W/L': `${g.wins}/${g.losses}`,
+    realized: formatCurrency(g.realized),
+    fees: formatCurrency(g.fees),
+  }));
+  console.log(subheader('By symbol'));
+  printTable(groupRows(report.bySymbol, 'symbol'));
+  console.log(subheader(`By ${report.period}`));
+  printTable(groupRows(report.byPeriod, report.period));
+  if (report.byAccount.length > 1) {
+    console.log(subheader('By account'));
+    printTable(groupRows(report.byAccount, 'account'));
+  }
+}
+
+export function printDividends(report: any, accountName?: string) {
+  console.log(header(`Dividends${accountName ? ' — ' + accountName : ''} (${report.count})${rangeLabel(report.from, report.to)}`));
+  if (report.count === 0) {
+    console.log(`  ${colors.muted('No dividends recorded. The arc app fills this in when a brokerage sync (e.g. IBKR Flex) imports cash activity.')}\n`);
+    return;
+  }
+  console.log(row('Total received', formatCurrency(report.total)));
+
+  const totalRows = (totals: any[], label: string) => totals.map((t: any) => ({
+    [label]: t.key || '—',
+    payments: t.count,
+    total: formatCurrency(t.total),
+  }));
+  console.log(subheader('By symbol'));
+  printTable(totalRows(report.bySymbol, 'symbol'));
+  console.log(subheader('By year'));
+  printTable(totalRows(report.byYear, 'year'));
+  if (report.byAccount.length > 1) {
+    console.log(subheader('By account'));
+    printTable(totalRows(report.byAccount, 'account'));
+  }
+  console.log(subheader('Payments'));
+  printTable(report.rows.map((r: any) => ({
+    date: r.date,
+    symbol: r.symbol || '—',
+    amount: formatCurrency(r.amount),
+    account: r.account,
+  })));
+}
+
+/** Points shown in the terminal; --json returns the full series. */
+const HISTORY_TAIL = 30;
+
+export function printPortfolioHistory(report: any, accountName?: string) {
+  console.log(header(`Portfolio Value History${accountName ? ' — ' + accountName : ''}${rangeLabel(report.from, report.to)}`));
+  if (report.series.length === 0) {
+    console.log(`  ${colors.muted('No value history recorded. The arc app records one point per day while a detailed investment account syncs; widen --from/--to or check `arc portfolio accounts`.')}\n`);
+    return;
+  }
+  const last = report.series[report.series.length - 1];
+  console.log(row('Latest', `${formatCurrency(last.value)} on ${last.date}`));
+  if (report.change) {
+    const pct = report.change.start !== 0 ? (report.change.delta / Math.abs(report.change.start)) * 100 : undefined;
+    console.log(row('Change', `${formatCurrency(report.change.delta)}${pct != null ? ' (' + pctStr(pct) + ')' : ''} since ${report.series[0].date}`));
+  }
+
+  console.log(subheader('By account'));
+  printTable(report.accounts.map((a: any) => ({
+    account: a.account,
+    days: a.days,
+    from: a.firstDate ?? '—',
+    to: a.lastDate ?? '—',
+    latest: a.latestValue == null ? colors.muted('—') : formatCurrency(a.latestValue),
+    'top mover': a.movers[0] ? `${a.movers[0].symbol} ${formatCurrency(a.movers[0].delta)}` : '—',
+  })));
+
+  const tail = report.series.slice(-HISTORY_TAIL);
+  console.log(subheader(report.series.length > HISTORY_TAIL
+    ? `Last ${HISTORY_TAIL} of ${report.series.length} days (--json for all)`
+    : `Daily value (${report.series.length} days)`));
+  printTable(tail.map((p: any) => ({ date: p.date, value: formatCurrency(p.value) })));
+}
+
 // ── Generic Success/Error ─────────────────────────────────────
 
 export function printSuccess(msg: string) {
@@ -551,6 +654,61 @@ export function printGoalDetail(goal: any) {
   console.log('');
 }
 
+export function printDebts(debts: any[]) {
+  console.log(header(`Debts (${debts.length})`));
+  if (debts.length === 0) {
+    console.log(`  ${colors.muted('No debts tracked. Mark a card or loan with `arc debts set --account <name> --due <day>`.')}\n`);
+    return;
+  }
+  printTable(debts.map((d: any) => ({
+    account: d.closed ? `${d.accountName} ${colors.muted('(closed)')}` : d.accountName,
+    balance: formatCurrency(d.balance),
+    due: d.dueDay != null ? `day ${d.dueDay}` : colors.muted('—'),
+    next: d.daysUntilDue == null
+      ? colors.muted('—')
+      : d.daysUntilDue === 0
+        ? colors.error('today')
+        : d.daysUntilDue <= 3
+          ? colors.warning(`${d.daysUntilDue}d`)
+          : `${d.daysUntilDue}d`,
+  })));
+}
+
+function describeRepeat(months: number | null): string {
+  if (months == null) return 'once';
+  if (months === 12) return 'every year';
+  return months === 1 ? 'every month' : `every ${months} months`;
+}
+
+export function printCategoryTemplates(list: any[]) {
+  console.log(header(`Category templates (${list.length})`));
+  if (list.length === 0) {
+    console.log(`  ${colors.muted('No category templates. Set a savings target with `arc categories template-set --category <name> --target <amount> --by YYYY-MM`.')}\n`);
+    return;
+  }
+  printTable(list.map((t: any) => ({
+    category: t.categoryName,
+    group: t.groupName ?? colors.muted('—'),
+    target: t.sinkingFund ? formatCurrency(t.sinkingFund.targetCents) : colors.muted('—'),
+    by: t.sinkingFund?.byMonth ?? colors.muted('—'),
+    repeat: t.sinkingFund ? describeRepeat(t.sinkingFund.repeatEveryMonths) : colors.muted('—'),
+    lines: t.directives.length,
+    editable: t.editable ? 'yes' : colors.warning('in Actual'),
+  })));
+  const locked = list.filter((t: any) => !t.editable);
+  if (locked.length > 0) {
+    console.log(`  ${colors.muted(`${locked.length} ${locked.length === 1 ? 'category has' : 'categories have'} templates arc will not rewrite — edit those in Actual.`)}\n`);
+  }
+}
+
+export function printTemplateWrite(result: any) {
+  console.log(header(`Savings target — ${result.categoryName}`));
+  console.log(row('Template', result.templateLine));
+  if (result.goalLine) console.log(row('Goal', result.goalLine));
+  console.log(row('Changed', result.changed ? 'yes' : colors.muted('no (already set)')));
+  console.log('');
+}
+
 // ── Group splits ──────────────────────────────────────────────
 
 export function printSplitGroups(groups: any[]) {
@@ -615,4 +773,117 @@ export function printRefunds(rows: any[]) {
   })));
   const total = rows.reduce((s: number, r: any) => s + Math.abs(r.originalAmount), 0);
   console.log(`\nTotal refunded: ${formatCurrency(total)}`);
+}
+
+// ── Reconcile ─────────────────────────────────────────────────
+
+function statementLineLabel(line: any): string {
+  return line.payee || line.description || '—';
+}
+
+export function printStatementReport(report: any) {
+  const period = report.period ? ` · ${report.period.start} → ${report.period.end}` : '';
+  console.log(header(`Statement vs ${report.accountName}${period}`));
+  const s = report.summary;
+  console.log(row('Lines', String(s.lines)));
+  console.log(row('Matched', colors.success(String(s.matched))));
+  console.log(row('Missing in arc', s.missingInLedger ? colors.warning(String(s.missingInLedger)) : '0'));
+  console.log(row('Amount differs', s.amountMismatches ? colors.warning(String(s.amountMismatches)) : '0'));
+  console.log(row('Ambiguous', s.ambiguous ? colors.warning(String(s.ambiguous)) : '0'));
+  console.log(row('Extra in arc', s.extraInLedger ? colors.warning(String(s.extraInLedger)) : '0'));
+  if (report.currency) console.log(row('Statement currency', report.currency));
+
+  if (report.balance) {
+    const point = (p: any) => p == null
+      ? colors.muted('—')
+      : p.matches
+        ? colors.success(`${sym.check} ${formatCurrency(p.statementCents)}`)
+        : colors.warning(`${formatCurrency(p.statementCents)} vs arc ${formatCurrency(p.ledgerCents)} (${formatCurrency(p.differenceCents)})`);
+    console.log(row('Opening balance', point(report.balance.opening)));
+    console.log(row('Closing balance', point(report.balance.closing)));
+  }
+
+  if (report.missingInLedger.length) {
+    console.log(subheader('Missing in arc (apply imports these)'));
+    printTable(report.missingInLedger.map((l: any) => ({
+      date: l.date,
+      payee: statementLineLabel(l),
+      amount: formatCurrency(l.amount),
+    })));
+  }
+  if (report.amountMismatches.length) {
+    console.log(subheader('Amount differs (left alone; fix by hand)'));
+    printTable(report.amountMismatches.map((m: any) => ({
+      date: m.line.date,
+      statement: `${statementLineLabel(m.line)} ${formatCurrency(m.statementCents)}`,
+      arc: `${m.transaction.payee_name || '—'} ${formatCurrency(m.ledgerCents)}`,
+      difference: formatCurrency(m.differenceCents),
+    })));
+  }
+  if (report.ambiguous.length) {
+    console.log(subheader('Ambiguous (several arc rows fit equally; left alone)'));
+    printTable(report.ambiguous.map((a: any) => ({
+      date: a.line.date,
+      payee: statementLineLabel(a.line),
+      amount: formatCurrency(a.line.amount),
+      'best guess': `${a.transaction.date} ${a.transaction.payee_name || '—'}`,
+    })));
+  }
+  if (report.extraInLedger.length) {
+    console.log(subheader('In arc but not on the statement'));
+    printTable(report.extraInLedger.map((t: any) => ({
+      date: t.date,
+      payee: t.payee_name || (t.transfer ? 'transfer' : '—'),
+      amount: formatCurrency(t.amount),
+      cleared: t.reconciled ? 'reconciled' : t.cleared ? 'yes' : 'no',
+    })));
+  }
+  if (!report.missingInLedger.length && !report.amountMismatches.length && !report.ambiguous.length && !report.extraInLedger.length) {
+    console.log(`\n  ${colors.success(sym.check + ' Everything on the statement is in arc, and nothing extra.')}`);
+  } else if (report.missingInLedger.length || report.matched.some((m: any) => !m.transaction.cleared)) {
+    console.log(`\n  ${colors.muted('Run `arc reconcile apply` with the same flags to import the missing lines and clear the matches.')}`);
+  }
+  console.log('');
+}
+
+export function printStatementApplied(res: any) {
+  console.log(header(`Statement applied to ${res.accountName}`));
+  console.log(row('Imported', String(res.imported)));
+  if (res.updatedByImport) console.log(row('Merged by import', String(res.updatedByImport)));
+  console.log(row('Marked cleared', String(res.cleared)));
+  console.log(row('Already cleared', String(res.alreadyCleared)));
+  const left = res.skipped.amountMismatches + res.skipped.ambiguous;
+  if (left) {
+    console.log(row('Left for you', colors.warning(`${res.skipped.amountMismatches} amount mismatch(es), ${res.skipped.ambiguous} ambiguous`)));
+    console.log(`  ${colors.muted('`arc reconcile statement` with the same flags lists them.')}`);
+  }
+  for (const e of res.importErrors) console.log(`  ${colors.error(sym.cross + ' ' + e)}`);
+  console.log('');
+}
+
+export function printDuplicateGroups(groups: any[]) {
+  console.log(header(`Likely duplicates (${groups.length})`));
+  if (groups.length === 0) {
+    console.log(`  ${colors.muted('None found. Widen the search with --since YYYY-MM-DD or lower --min-score.')}\n`);
+    return;
+  }
+  for (const g of groups) {
+    console.log(subheader(`${g.accountName} · score ${g.score} · ${g.reasons.join(', ')}`));
+    printTable(g.transactions.map((t: any) => ({
+      id: t.id,
+      date: t.date,
+      payee: t.payee_name || '—',
+      amount: formatCurrency(t.amount),
+      cleared: t.reconciled ? 'reconciled' : t.cleared ? 'yes' : 'no',
+    })));
+  }
+  console.log(`\n  ${colors.muted('Delete the extra copy with `arc transactions delete --id <id>`.')}\n`);
+}
+
+export function printAccountReconciled(res: any) {
+  console.log(header(`Reconciled ${res.accountName}`));
+  console.log(row('Cleared balance', formatCurrency(res.clearedBalance)));
+  console.log(row('Locked', `${res.locked} transaction(s)`));
+  console.log(row('Last reconciled', new Date(Number(res.lastReconciled)).toISOString()));
+  console.log('');
 }

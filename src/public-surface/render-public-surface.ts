@@ -40,7 +40,9 @@ const GROUP_ORDER: readonly PublicOperationGroup[] = [
   "query",
   "portfolio",
   "goals",
+  "debts",
   "splits",
+  "reconcile",
   "server",
   "agent",
 ];
@@ -57,7 +59,9 @@ const GROUP_TITLES: Record<PublicOperationGroup, string> = {
   query: "Query",
   portfolio: "Portfolio",
   goals: "Goals",
+  debts: "Debts",
   splits: "Group Splits",
+  reconcile: "Reconcile",
   server: "Server",
   agent: "Agent",
 };
@@ -66,7 +70,8 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
   accounts: "Manage on- and off-budget accounts and balances.",
   transactions:
     "Create, update, split, transfer, and batch-process transactions.",
-  categories: "Manage category groups and individual categories.",
+  categories:
+    "Manage category groups and individual categories, and the sinking-fund savings targets (`#template … by YYYY-MM` + `#goal`) Actual keeps in each category's note.",
   payees: "Manage payees, merge duplicates, and look up usage.",
   tags:
     "Manage Actual Budget tags (color, description) and apply / unapply them on transactions. Tag membership lives in transaction notes as `#tag`.",
@@ -79,8 +84,12 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
     "Track investment holdings and trade activity (read-only). Investment data lives in account notes (`#investment:` / `#hold:v1:`) and `#act:`-tagged transactions.",
   goals:
     "Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.",
+  debts:
+    "Credit cards, loans and EMIs with a monthly due day. A debt is an ordinary account whose note carries a `#debt|due:N` line — the same line the arc app reads to schedule its payment reminders, so a due day set here reminds you on your phone.",
   splits:
     "Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.",
+  reconcile:
+    "Check a bank statement (CSV or JSON) against an account's transactions: what matches, what the ledger is missing, what the bank never saw, and where the amounts disagree. Uses the same matching as the arc app's statement import, so fuzzy merchant names, posting-date drift and FX estimates line up. Statement amounts are signed from the account holder's side (negative = money out).",
   server:
     "Server lifecycle. Managed Arc servers scale to zero, so one that has been idle must start before it can answer. Every other command absorbs this automatically; call `wake` when you would rather pay the wait up front.",
   agent:
@@ -100,7 +109,7 @@ export function approvalLabel(op: PublicOperation): string {
 }
 
 const APPROVAL_NOTE =
-  "**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Unpaired installs run everything and keep a local log only.";
+  "**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Installs set up with the app's payload command (not paired) run everything and keep a local log only.";
 
 function groupOperations(
   ops: readonly PublicOperation[],
