@@ -64,6 +64,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_accounts_list",
     mode: "read",
+    risk: "read",
     description: "List all accounts in the active budget with balances and on/off-budget status.",
     examples: ["arc accounts list", "arc accounts list --json"],
     inputSchema: { json: jsonFlag },
@@ -75,6 +76,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "balance",
     mcpTool: "arc_accounts_balance",
     mode: "read",
+    risk: "read",
     description: "Show the current balance of a single account.",
     examples: ["arc accounts balance --account 'HDFC Checking'"],
     inputSchema: {
@@ -89,6 +91,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_accounts_create",
     mode: "write",
+    risk: "write",
     description: "Create a new account, optionally off-budget and with a starting balance.",
     examples: [
       "arc accounts create --name 'Brokerage' --type investment --offbudget true",
@@ -108,6 +111,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_accounts_update",
     mode: "write",
+    risk: "write",
     description: "Update an account's name, type, or on/off-budget flag.",
     examples: ["arc accounts update --id 'Cash' --name 'Wallet'"],
     inputSchema: {
@@ -124,6 +128,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "close",
     mcpTool: "arc_accounts_close",
     mode: "write",
+    risk: "destructive",
     description: "Close an account, optionally transferring its remaining balance to another account.",
     examples: ["arc accounts close --id 'Old Card' --transfer-to 'New Card'"],
     inputSchema: {
@@ -138,6 +143,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "reopen",
     mcpTool: "arc_accounts_reopen",
     mode: "write",
+    risk: "write",
     description: "Reopen a previously closed account.",
     examples: ["arc accounts reopen --id 'Old Card'"],
     inputSchema: { id: accountRef },
@@ -149,6 +155,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_accounts_delete",
     mode: "write",
+    risk: "destructive",
     description: "Permanently delete an account. Destructive — prefer close in most cases.",
     examples: ["arc accounts delete --id 'Test Account'"],
     inputSchema: { id: accountRef },
@@ -162,6 +169,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_transactions_list",
     mode: "read",
+    risk: "read",
     description: "List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set).",
     examples: [
       "arc transactions list --account 'HDFC Checking'",
@@ -184,6 +192,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "add",
     mcpTool: "arc_transactions_add",
     mode: "write",
+    risk: "write",
     description: "Add a single transaction to an account. Generates a deterministic imported_id when omitted.",
     examples: [
       "arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 'Coffee Shop' --category 'Dining'",
@@ -208,6 +217,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "import",
     mcpTool: "arc_transactions_import",
     mode: "write",
+    risk: "write",
     description: "Bulk-import transactions into an account from a JSON array, with automatic de-duplication.",
     examples: [
       "arc transactions import --account 'Card' '[{\"date\":\"2026-04-01\",\"amount\":-1234,\"payee_name\":\"Amazon\"}]'",
@@ -224,6 +234,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_transactions_update",
     mode: "write",
+    risk: "write",
     description: "Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose.",
     examples: [
       "arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'",
@@ -249,6 +260,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_transactions_delete",
     mode: "write",
+    risk: "destructive",
     description: "Delete a transaction by id.",
     examples: ["arc transactions delete --id <txn-id>"],
     inputSchema: { id: z.string() },
@@ -260,6 +272,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "split",
     mcpTool: "arc_transactions_split",
     mode: "write",
+    risk: "write",
     description: "Create a split transaction with one or more child sub-transactions.",
     examples: [
       "arc transactions split --account 'Card' --date 2026-04-01 --payee 'Costco' --subs '[{\"amount\":-50,\"category\":\"Groceries\"},{\"amount\":-20,\"category\":\"Household\"}]'",
@@ -280,6 +293,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "transfer",
     mcpTool: "arc_transactions_transfer",
     mode: "write",
+    risk: "write",
     description: "Create a linked transfer between two accounts.",
     examples: [
       "arc transactions transfer --from 'Checking' --to 'Savings' --amount 500 --date 2026-04-10",
@@ -301,6 +315,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "batch-update",
     mcpTool: "arc_transactions_batch_update",
     mode: "write",
+    risk: "destructive",
     description: "Apply field updates to many transactions in one call. Accepts a JSON array of {id, ...fields}.",
     examples: [
       "arc transactions batch-update '[{\"id\":\"...\",\"category\":\"Dining\"},{\"id\":\"...\",\"notes\":\"vacation\"}]'",
@@ -316,6 +331,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "batch-add",
     mcpTool: "arc_transactions_batch_add",
     mode: "write",
+    risk: "destructive",
     description: "Bulk-add transactions to an account, resolving category names and generating imported_ids.",
     examples: [
       "arc transactions batch-add --account 'Card' '[{\"date\":\"2026-04-01\",\"amount\":-12.5,\"payee_name\":\"Bakery\"}]'",
@@ -332,6 +348,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "batch-categorize",
     mcpTool: "arc_transactions_batch_categorize",
     mode: "write",
+    risk: "destructive",
     description: "Categorize all uncategorized transactions in an account whose payee matches a substring pattern.",
     examples: [
       "arc transactions batch-categorize --account 'Card' --payee 'starbucks' --category 'Dining'",
@@ -353,6 +370,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_categories_list",
     mode: "read",
+    risk: "read",
     description: "List all category groups and their categories.",
     examples: ["arc categories list", "arc categories list --json"],
     inputSchema: { json: jsonFlag },
@@ -364,6 +382,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_categories_create",
     mode: "write",
+    risk: "write",
     description: "Create a new category inside an existing category group.",
     examples: ["arc categories create --name 'Coffee' --group 'Food'"],
     inputSchema: {
@@ -379,6 +398,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_categories_update",
     mode: "write",
+    risk: "write",
     description: "Rename a category, move it to a different group, or toggle hidden.",
     examples: ["arc categories update --id 'Coffee' --group 'Dining'"],
     inputSchema: {
@@ -395,6 +415,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_categories_delete",
     mode: "write",
+    risk: "destructive",
     description: "Delete a category, optionally transferring its transactions and budget to another category.",
     examples: ["arc categories delete --id 'Old' --transfer-to 'New'"],
     inputSchema: {
@@ -411,6 +432,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_payees_list",
     mode: "read",
+    risk: "read",
     description: "List all payees. Pass --all to include hidden / system payees.",
     examples: ["arc payees list", "arc payees list --all"],
     inputSchema: {
@@ -425,6 +447,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_payees_create",
     mode: "write",
+    risk: "write",
     description: "Create a new payee by name.",
     examples: ["arc payees create --name 'Local Bakery'"],
     inputSchema: { name: z.string() },
@@ -436,6 +459,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_payees_update",
     mode: "write",
+    risk: "write",
     description: "Rename an existing payee.",
     examples: ["arc payees update --id 'Bakery' --name 'Local Bakery'"],
     inputSchema: {
@@ -450,6 +474,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_payees_delete",
     mode: "write",
+    risk: "destructive",
     description: "Delete a payee. Linked transactions become payee-less.",
     examples: ["arc payees delete --id 'Old Vendor'"],
     inputSchema: { id: payeeRef },
@@ -461,6 +486,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "merge",
     mcpTool: "arc_payees_merge",
     mode: "write",
+    risk: "destructive",
     description: "Merge one or more payees into a target payee. Comma-separated source list.",
     examples: ["arc payees merge --target 'Amazon' --merge 'AMZN,Amazon.com,Amzn Mktp'"],
     inputSchema: {
@@ -475,6 +501,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "find-or-create",
     mcpTool: "arc_payees_find_or_create",
     mode: "write",
+    risk: "write",
     description: "Look up a payee by name and create it if missing. Returns the payee id.",
     examples: ["arc payees find-or-create --name 'Local Bakery'"],
     inputSchema: { name: z.string() },
@@ -486,6 +513,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "common",
     mcpTool: "arc_payees_common",
     mode: "read",
+    risk: "read",
     description: "List the most frequently used payees, ordered by transaction count.",
     examples: ["arc payees common --limit 10"],
     inputSchema: {
@@ -508,6 +536,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_tags_list",
     mode: "read",
+    risk: "read",
     description: "List all tags with their colors and optional descriptions.",
     examples: ["arc tags list", "arc tags list --json"],
     inputSchema: { json: jsonFlag },
@@ -519,6 +548,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "add",
     mcpTool: "arc_tags_add",
     mode: "write",
+    risk: "write",
     description: "Create a new tag. The leading `#` is optional and stripped if present.",
     examples: [
       "arc tags add --name Quantini",
@@ -537,6 +567,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_tags_update",
     mode: "write",
+    risk: "write",
     description: "Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID.",
     examples: [
       "arc tags update --id Quantini --color '#FF6B6B'",
@@ -556,6 +587,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_tags_delete",
     mode: "write",
+    risk: "destructive",
     description: "Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately.",
     examples: ["arc tags delete --id Quantini"],
     inputSchema: { id: z.string().describe("Tag name or UUID.") },
@@ -567,6 +599,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "apply",
     mcpTool: "arc_tags_apply",
     mode: "write",
+    risk: "write",
     description: "Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent.",
     examples: [
       "arc tags apply --transaction <tx-id> --tag Quantini",
@@ -584,6 +617,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "unapply",
     mcpTool: "arc_tags_unapply",
     mode: "write",
+    risk: "write",
     description: "Remove one or more `#tag` tokens from a transaction's notes.",
     examples: ["arc tags unapply --transaction <tx-id> --tag Quantini"],
     inputSchema: {
@@ -600,6 +634,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_rules_list",
     mode: "read",
+    risk: "read",
     description: "List all transaction rules in the active budget.",
     examples: ["arc rules list", "arc rules list --json"],
     inputSchema: { json: jsonFlag },
@@ -611,6 +646,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_rules_create",
     mode: "write",
+    risk: "write",
     description: "Create a rule from a JSON payload. Account/category/payee names in conditions and actions are auto-resolved to ids.",
     examples: [
       "arc rules create '{\"stage\":\"pre\",\"conditionsOp\":\"and\",\"conditions\":[{\"field\":\"payee\",\"op\":\"is\",\"value\":\"Starbucks\"}],\"actions\":[{\"field\":\"category\",\"op\":\"set\",\"value\":\"Dining\"}]}'",
@@ -626,6 +662,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_rules_update",
     mode: "write",
+    risk: "write",
     description: "Update an existing rule. The JSON payload must include the rule id.",
     examples: ["arc rules update '{\"id\":\"...\",\"actions\":[...]}'"],
     inputSchema: {
@@ -639,6 +676,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_rules_delete",
     mode: "write",
+    risk: "destructive",
     description: "Delete a rule by id.",
     examples: ["arc rules delete --id <rule-id>"],
     inputSchema: { id: z.string() },
@@ -652,6 +690,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_schedules_list",
     mode: "read",
+    risk: "read",
     description: "List all recurring schedules.",
     examples: ["arc schedules list"],
     inputSchema: { json: jsonFlag },
@@ -663,6 +702,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_schedules_create",
     mode: "write",
+    risk: "write",
     description: "Create a recurring schedule from a JSON payload. Account/category/payee names are auto-resolved.",
     examples: [
       "arc schedules create '{\"name\":\"Rent\",\"account\":\"Checking\",\"payee\":\"Landlord\",\"amount\":-150000,\"date\":{\"start\":\"2026-05-01\",\"frequency\":\"monthly\"}}'",
@@ -678,6 +718,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_schedules_update",
     mode: "write",
+    risk: "write",
     description: "Update an existing schedule by id with a JSON payload of fields to change.",
     examples: ["arc schedules update --id <sched-id> '{\"amount\":-160000}'"],
     inputSchema: {
@@ -692,6 +733,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_schedules_delete",
     mode: "write",
+    risk: "destructive",
     description: "Delete a schedule by id.",
     examples: ["arc schedules delete --id <sched-id>"],
     inputSchema: { id: z.string() },
@@ -703,6 +745,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "post",
     mcpTool: "arc_schedules_post",
     mode: "write",
+    risk: "write",
     description: "Materialize a schedule as a real transaction on the given date (defaults to next due date).",
     examples: [
       "arc schedules post --id <sched-id>",
@@ -720,6 +763,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "upcoming",
     mcpTool: "arc_schedules_upcoming",
     mode: "read",
+    risk: "read",
     description: "List schedules sorted by next due date.",
     examples: ["arc schedules upcoming"],
     inputSchema: { json: jsonFlag },
@@ -731,6 +775,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "complete",
     mcpTool: "arc_schedules_complete",
     mode: "write",
+    risk: "write",
     description: "Mark a schedule as completed so it stops generating new occurrences.",
     examples: ["arc schedules complete --id <sched-id>"],
     inputSchema: { id: z.string() },
@@ -744,6 +789,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_budgets_list",
     mode: "read",
+    risk: "read",
     description: "List budget files available on the configured Actual server.",
     examples: ["arc budgets list", "arc budgets list --json"],
     inputSchema: { json: jsonFlag },
@@ -755,6 +801,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "months",
     mcpTool: "arc_budgets_months",
     mode: "read",
+    risk: "read",
     description: "List the budget months Actual has data for.",
     examples: ["arc budgets months"],
     inputSchema: { json: jsonFlag },
@@ -767,6 +814,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     aliases: ["show"],
     mcpTool: "arc_budgets_month",
     mode: "read",
+    risk: "read",
     description: "Show the full budget for a single month (categories, budgeted, spent, balance).",
     examples: ["arc budgets month --month 2026-04", "arc budgets show --month 2026-04"],
     inputSchema: {
@@ -781,6 +829,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "set-amount",
     mcpTool: "arc_budgets_set_amount",
     mode: "write",
+    risk: "write",
     description: "Set the budgeted amount for a category in a given month.",
     examples: ["arc budgets set-amount --month 2026-04 --category 'Groceries' --amount 600"],
     inputSchema: {
@@ -796,6 +845,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "set-carryover",
     mcpTool: "arc_budgets_set_carryover",
     mode: "write",
+    risk: "write",
     description: "Enable or disable budget carryover (rollover) for a category in a given month.",
     examples: ["arc budgets set-carryover --month 2026-04 --category 'Travel' --enabled true"],
     inputSchema: {
@@ -811,6 +861,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "transfer",
     mcpTool: "arc_budgets_transfer",
     mode: "write",
+    risk: "write",
     description: "Move budgeted money between two categories within the same month.",
     examples: ["arc budgets transfer --month 2026-04 --from 'Dining' --to 'Groceries' --amount 50"],
     inputSchema: {
@@ -827,6 +878,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "income",
     mcpTool: "arc_budgets_income",
     mode: "read",
+    risk: "read",
     description: "Show income categories with budgeted vs received totals for a month.",
     examples: ["arc budgets income --month 2026-04"],
     inputSchema: {
@@ -842,6 +894,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     aliases: ["totals"],
     mcpTool: "arc_budgets_summary",
     mode: "read",
+    risk: "read",
     description: "Top-line totals for a month: total budgeted, spent, balance, and to-budget.",
     examples: ["arc budgets summary --month 2026-04", "arc budgets totals --month 2026-04"],
     inputSchema: {
@@ -856,6 +909,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "switch",
     mcpTool: "arc_budgets_switch",
     mode: "write",
+    risk: "write",
     description: "Switch the active budget file for subsequent commands. Persists the selection in the credential store.",
     examples: ["arc budgets switch --budget 'Family Budget'"],
     inputSchema: {
@@ -874,6 +928,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "spending",
     mcpTool: "arc_query_spending",
     mode: "read",
+    risk: "read",
     description: "Spending summary for a month broken down by category.",
     examples: ["arc query spending --month 2026-04"],
     inputSchema: {
@@ -889,6 +944,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     aliases: ["summary"],
     mcpTool: "arc_query_accounts",
     mode: "read",
+    risk: "read",
     description: "Account summary report with balances and on/off-budget grouping.",
     examples: ["arc query accounts", "arc query summary"],
     inputSchema: { json: jsonFlag },
@@ -900,6 +956,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "uncategorized",
     mcpTool: "arc_query_uncategorized",
     mode: "read",
+    risk: "read",
     description: "List uncategorized transactions, optionally scoped to one account.",
     examples: ["arc query uncategorized", "arc query uncategorized --account 'Card'"],
     inputSchema: {
@@ -914,6 +971,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "payee",
     mcpTool: "arc_query_payee",
     mode: "read",
+    risk: "read",
     description: "Recent transactions for a single payee across all accounts.",
     examples: ["arc query payee --name 'Amazon' --limit 50"],
     inputSchema: {
@@ -929,6 +987,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "category",
     mcpTool: "arc_query_category",
     mode: "read",
+    risk: "read",
     description: "Transactions in a single category, optionally filtered by date range.",
     examples: ["arc query category --name 'Groceries' --start 2026-01-01 --end 2026-03-31"],
     inputSchema: {
@@ -945,6 +1004,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "trends",
     mcpTool: "arc_query_trends",
     mode: "read",
+    risk: "read",
     description: "Per-category spending trend over the last N months.",
     examples: ["arc query trends --months 6"],
     inputSchema: {
@@ -960,6 +1020,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     aliases: ["top-categories"],
     mcpTool: "arc_query_top",
     mode: "read",
+    risk: "read",
     description: "Top spending categories for a month, ranked by amount spent.",
     examples: ["arc query top --month 2026-04 --limit 10"],
     inputSchema: {
@@ -976,6 +1037,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     aliases: ["monthly-totals"],
     mcpTool: "arc_query_monthly",
     mode: "read",
+    risk: "read",
     description: "Income, expenses, and net totals per month for the last N months.",
     examples: ["arc query monthly --months 12", "arc query monthly-totals --months 6"],
     inputSchema: {
@@ -990,6 +1052,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "balance-history",
     mcpTool: "arc_query_balance_history",
     mode: "read",
+    risk: "read",
     description: "Daily running balance for an account over the last N months.",
     examples: ["arc query balance-history --account 'Checking' --months 6"],
     inputSchema: {
@@ -1005,6 +1068,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "monthly-balances",
     mcpTool: "arc_query_monthly_balances",
     mode: "read",
+    risk: "read",
     description: "End-of-month balance series for an account over the last N months.",
     examples: ["arc query monthly-balances --account 'Checking' --months 12"],
     inputSchema: {
@@ -1020,6 +1084,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "custom",
     mcpTool: "arc_query_custom",
     mode: "read",
+    risk: "read",
     description: "Run a raw Actual query (ActualQL JSON). Advanced — for power users only.",
     examples: ["arc query custom --q '{\"table\":\"transactions\",\"select\":[\"id\",\"amount\"]}'"],
     inputSchema: {
@@ -1035,6 +1100,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_portfolio_list",
     mode: "read",
+    risk: "read",
     description: "List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %).",
     examples: ["arc portfolio list", "arc portfolio list --account 'IBKR' --json"],
     inputSchema: {
@@ -1049,6 +1115,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "holding",
     mcpTool: "arc_portfolio_holding",
     mode: "read",
+    risk: "read",
     description: "Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger.",
     examples: ["arc portfolio holding --symbol AAPL", "arc portfolio holding --symbol SOL --account 'Crypto'"],
     inputSchema: {
@@ -1063,6 +1130,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "trades",
     mcpTool: "arc_portfolio_trades",
     mode: "read",
+    risk: "read",
     description: "Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts.",
     examples: ["arc portfolio trades --symbol AAPL", "arc portfolio trades --kind dividend --start 2026-01-01 --json"],
     inputSchema: {
@@ -1087,6 +1155,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "summary",
     mcpTool: "arc_portfolio_summary",
     mode: "read",
+    risk: "read",
     description: "Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class.",
     examples: ["arc portfolio summary", "arc portfolio summary --json"],
     inputSchema: { json: jsonFlag },
@@ -1098,6 +1167,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "accounts",
     mcpTool: "arc_portfolio_accounts",
     mode: "read",
+    risk: "read",
     description: "List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.",
     examples: ["arc portfolio accounts", "arc portfolio accounts --json"],
     inputSchema: { json: jsonFlag },
@@ -1111,6 +1181,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_goals_list",
     mode: "read",
+    risk: "read",
     description:
       "List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue).",
     examples: ["arc goals list", "arc goals list --archived --json"],
@@ -1129,6 +1200,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "show",
     mcpTool: "arc_goals_show",
     mode: "read",
+    risk: "read",
     description:
       "Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track.",
     examples: ["arc goals show --goal 'Japan trip'", "arc goals show --goal 'Japan trip' --json"],
@@ -1144,6 +1216,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_goals_create",
     mode: "write",
+    risk: "write",
     description:
       "Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too.",
     examples: [
@@ -1173,6 +1246,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "update",
     mcpTool: "arc_goals_update",
     mode: "write",
+    risk: "write",
     description: "Change a goal's name, target, deadline, behavior, color, or icon.",
     examples: [
       "arc goals update --goal 'Japan trip' --target 6000",
@@ -1198,6 +1272,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "contribute",
     mcpTool: "arc_goals_contribute",
     mode: "write",
+    risk: "write",
     description:
       "Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead.",
     examples: ["arc goals contribute --goal 'Japan trip' --amount 250"],
@@ -1213,6 +1288,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "current",
     mcpTool: "arc_goals_current",
     mode: "write",
+    risk: "write",
     description:
       "Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time.",
     examples: ["arc goals current --goal 'Japan trip'", "arc goals current --clear"],
@@ -1228,6 +1304,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "archive",
     mcpTool: "arc_goals_archive",
     mode: "write",
+    risk: "write",
     description:
       "Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight.",
     examples: ["arc goals archive --goal 'Japan trip'"],
@@ -1240,6 +1317,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "reopen",
     mcpTool: "arc_goals_reopen",
     mode: "write",
+    risk: "write",
     description: "Un-archive a goal.",
     examples: ["arc goals reopen --goal 'Japan trip'"],
     inputSchema: { goal: goalRef },
@@ -1251,6 +1329,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_goals_delete",
     mode: "write",
+    risk: "destructive",
     description:
       "Remove the goal overlay from an account. The account, its balance and its transactions are left untouched.",
     examples: ["arc goals delete --goal 'Japan trip'"],
@@ -1265,6 +1344,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "list",
     mcpTool: "arc_splits_list",
     mode: "read",
+    risk: "read",
     description:
       "List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled.",
     examples: ["arc splits list", "arc splits list --person Sam --open --json"],
@@ -1283,6 +1363,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "balances",
     mcpTool: "arc_splits_balances",
     mode: "read",
+    risk: "read",
     description:
       "Who owes you what. Totals each person's outstanding and already-settled amounts across every split.",
     examples: ["arc splits balances", "arc splits balances --json"],
@@ -1295,6 +1376,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "create",
     mcpTool: "arc_splits_create",
     mode: "write",
+    risk: "write",
     description:
       "Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money.",
     examples: [
@@ -1330,6 +1412,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "settle",
     mcpTool: "arc_splits_settle",
     mode: "write",
+    risk: "write",
     description:
       "Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income.",
     examples: [
@@ -1349,6 +1432,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "reopen",
     mcpTool: "arc_splits_reopen",
     mode: "write",
+    risk: "write",
     description: "Flip a settled share back to open.",
     examples: ["arc splits reopen --gid ab12cd --person Sam"],
     inputSchema: { gid: z.string(), person: z.string() },
@@ -1360,6 +1444,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "remove",
     mcpTool: "arc_splits_remove",
     mode: "write",
+    risk: "destructive",
     description: "Drop one person from a split, leaving everyone else in it.",
     examples: ["arc splits remove --gid ab12cd --person Sam"],
     inputSchema: { gid: z.string(), person: z.string() },
@@ -1371,6 +1456,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "delete",
     mcpTool: "arc_splits_delete",
     mode: "write",
+    risk: "destructive",
     description:
       "Delete an entire split group across every transaction carrying it. The transactions themselves are untouched.",
     examples: ["arc splits delete --gid ab12cd"],
@@ -1384,6 +1470,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "refund",
     mcpTool: "arc_transactions_refund",
     mode: "write",
+    risk: "write",
     description:
       "Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows.",
     examples: ["arc transactions refund --id <transaction-id>"],
@@ -1396,6 +1483,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "unrefund",
     mcpTool: "arc_transactions_unrefund",
     mode: "write",
+    risk: "write",
     description:
       "Undo a refund, restoring the original amount, its direction (expense or income), and the note.",
     examples: ["arc transactions unrefund --id <transaction-id>"],
@@ -1408,6 +1496,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "refunds",
     mcpTool: "arc_transactions_refunds",
     mode: "read",
+    risk: "read",
     description:
       "List refunded transactions with the original amount recovered from the refund token, and when each was marked.",
     examples: ["arc transactions refunds", "arc transactions refunds --start 2026-01-01 --json"],
@@ -1427,6 +1516,7 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     subcommand: "wake",
     mcpTool: "arc_server_wake",
     mode: "read",
+    risk: "read",
     description:
       "Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one.",
     examples: ["arc server wake", "arc server wake --timeout 120 --json"],
@@ -1437,6 +1527,48 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
         .describe("Seconds to wait before giving up. Defaults to 90."),
       json: jsonFlag,
     },
+    defaultExposure: "default",
+  },
+
+  // ── agent ──────────────────────────────────────────────────────────────────
+  // How an agent finds out what it may do, and finishes a call that waited
+  // for approval. Never gated, never able to approve or deny anything: those
+  // need the user's Face ID or Touch ID.
+  {
+    id: "agent.request-status",
+    group: "agent",
+    subcommand: "request-status",
+    mcpTool: "arc_agent_request_status",
+    mode: "read",
+    risk: "read",
+    description:
+      "Finish a call that returned `pending_approval`. Waits up to `wait_seconds` for the user to decide, then runs the exact call they approved, once, and returns its result. Returns `pending_approval` again if they have not decided yet, or an error if they denied it or it expired.",
+    examples: [
+      "arc agent request-status --request-id k57abc --wait-seconds 30",
+    ],
+    inputSchema: {
+      request_id: z.string().describe("The `request_id` from a `pending_approval` result."),
+      wait_seconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(50)
+        .optional()
+        .describe("Seconds to wait for a decision before returning (0-50). Defaults to 30."),
+    },
+    defaultExposure: "default",
+  },
+  {
+    id: "agent.permissions",
+    group: "agent",
+    subcommand: "permissions",
+    mcpTool: "arc_agent_permissions",
+    mode: "read",
+    risk: "read",
+    description:
+      "What this agent may do on this machine: for each operation group, whether reads, writes and deletes run, ask the user first, or are refused, plus any time-limited approvals in force. Call it before a batch of changes so you can tell the user what will need their approval.",
+    examples: ["arc agent permissions", "arc agent permissions --json"],
+    inputSchema: { json: jsonFlag },
     defaultExposure: "default",
   },
 ];

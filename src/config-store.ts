@@ -3,6 +3,12 @@ import path from 'path';
 import { getArcConfigPath } from './runtime-paths.js';
 import type { RuntimeConfig } from './types.js';
 import { assertArcHost } from './utils/arc-host.js';
+import {
+  keychainApiKey,
+  keychainBudgetPassword,
+  keychainEncryptionPassword,
+  secretsInKeychain,
+} from './agent-controls/credentials.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -79,6 +85,7 @@ function validateRuntimeConfig(value: unknown, filePath: string): Partial<Runtim
   if ('defaultSyncId' in value) config.defaultSyncId = readStringField(value.defaultSyncId, 'defaultSyncId', filePath);
   if ('defaultBudgetName' in value) config.defaultBudgetName = readStringField(value.defaultBudgetName, 'defaultBudgetName', filePath);
   if ('encryptionPassword' in value) config.encryptionPassword = readStringField(value.encryptionPassword, 'encryptionPassword', filePath);
+  if (value.secretsIn === 'keychain') config.secretsIn = 'keychain';
 
   if ('budgets' in value) {
     if (!isPlainObject(value.budgets)) {
@@ -103,11 +110,23 @@ function resolveRuntimeConfig(
   saved: Partial<RuntimeConfig> | null,
   env: NodeJS.ProcessEnv
 ): RuntimeConfig {
+  const inKeychain = secretsInKeychain(saved);
   const apiUrl = env.ACTUAL_SERVER_URL ?? saved?.apiUrl;
-  const apiKey = env.ACTUAL_PASSWORD ?? saved?.apiKey;
+  // Environment overrides win over both the file and the keychain.
+  const apiKey = env.ACTUAL_PASSWORD ?? saved?.apiKey ?? (inKeychain ? keychainApiKey(env) : undefined);
 
   if (!apiUrl) throw new Error('Missing runtime config value: apiUrl');
-  if (!apiKey) throw new Error('Missing runtime config value: apiKey');
+  if (!apiKey) {
+    if (inKeychain) {
+      throw new Error(
+        "arc's server password is in the keychain, but the keychain couldn't be read. " +
+          (process.platform === 'darwin'
+            ? 'Unlock it (security unlock-keychain) — it is locked over SSH and under cron — or set ACTUAL_PASSWORD.'
+            : 'Make sure the Secret Service (gnome-keyring or KeePassXC) is running and unlocked, or set ACTUAL_PASSWORD.')
+      );
+    }
+    throw new Error('Missing runtime config value: apiKey');
+  }
 
   // apiUrl is the host we actually send credentials to, so it is the one that
   // must satisfy the arc.moi restriction on every load — not just at bootstrap
@@ -120,14 +139,26 @@ function resolveRuntimeConfig(
     assertArcHost(displayUrl, env.ACTUAL_DISPLAY_URL ? 'ACTUAL_DISPLAY_URL' : 'displayUrl');
   }
 
+  const defaultSyncId = env.ACTUAL_BUDGET_SYNC_ID ?? saved?.defaultSyncId;
+  let budgets = saved?.budgets;
+  // Hydrate only the selected budget's password: each keychain read is a
+  // subprocess, and the other budgets are read on demand by getBudgetPassword.
+  if (inKeychain && defaultSyncId && budgets?.[defaultSyncId] && !budgets[defaultSyncId].encryptionPassword &&
+      budgets[defaultSyncId].hasSavedPassword !== false) {
+    const pw = keychainBudgetPassword(defaultSyncId, env);
+    if (pw) budgets = { ...budgets, [defaultSyncId]: { ...budgets[defaultSyncId], encryptionPassword: pw } };
+  }
+
   return {
     apiUrl,
     apiKey,
     displayUrl,
-    defaultSyncId: env.ACTUAL_BUDGET_SYNC_ID ?? saved?.defaultSyncId,
+    defaultSyncId,
     defaultBudgetName: env.ACTUAL_BUDGET_NAME ?? saved?.defaultBudgetName,
-    encryptionPassword: env.ACTUAL_ENCRYPTION_PASSWORD ?? saved?.encryptionPassword,
-    budgets: saved?.budgets,
+    encryptionPassword: env.ACTUAL_ENCRYPTION_PASSWORD ?? saved?.encryptionPassword ??
+      (inKeychain ? keychainEncryptionPassword(env) : undefined),
+    budgets,
+    secretsIn: saved?.secretsIn,
   };
 }
 

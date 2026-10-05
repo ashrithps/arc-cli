@@ -16,6 +16,8 @@ export interface RuntimeConfig {
   defaultBudgetName?: string;
   encryptionPassword?: string;
   budgets?: Record<string, RuntimeBudgetProfile>;
+  /** "keychain" once secrets live in the OS keychain instead of this file. */
+  secretsIn?: 'keychain';
 }
 
 export interface InstallPayload {

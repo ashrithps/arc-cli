@@ -313,6 +313,11 @@ export function printHelp() {
   console.log(cmd('goals', 'Savings goals — progress, contributions, deadlines'));
   console.log(cmd('splits', 'Group splits — share a cost, track who owes you'));
   console.log(cmd('backup', 'List/clean backups'));
+  console.log(cmd('auth pair <token>', 'Pair this machine with the arc app (--agent, --label)'));
+  console.log(cmd('auth status', 'Pairing, secrets storage and last contact'));
+  console.log(cmd('approvals', 'list / show / approve (Touch ID) / deny / wait / enroll-mac'));
+  console.log(cmd('activity', 'What agents did here: --agent, --since 2h, --follow, --json'));
+  console.log(cmd('agents', 'whoami (permissions for this agent) / list'));
   console.log(cmd('server', 'Server lifecycle (wake a sleeping server)'));
   console.log(cmd('wake', 'Shortcut for `arc server wake`'));
   console.log(cmd('update', 'Update arc to the latest published build'));

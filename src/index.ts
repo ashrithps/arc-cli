@@ -32,6 +32,20 @@ import {
 } from './version.js';
 import { startMcpServer, startHttpMcpServer } from './mcp/server.js';
 import * as ui from './ui/views.js';
+import { isPaired } from './agent-controls/connection.js';
+import { migrateSecretsToKeychain, keychainApiKey, keychainEncryptionPassword } from './agent-controls/credentials.js';
+import { resolveCliOperation, type CliOperation } from './agent-controls/cli-operation.js';
+import { detectClientFromEnv } from './agent-controls/client-identity.js';
+import {
+  handleActivity,
+  handleAgentGroup,
+  handleAgents,
+  handleApprovals,
+  handleAuthPair,
+  handleAuthStatus,
+  handleAuthUnpair,
+  runCliGated,
+} from './agent-controls/commands.js';
 import {
   isDaemonRunning,
   readStatus,
@@ -895,16 +909,28 @@ async function listBudgetCatalog(client: ActualClient) {
   }));
 }
 
-async function handleAuthCommand(sub: string, flags: Record<string, string>) {
+async function handleAuthCommand(sub: string, flags: Record<string, string>, positional: string[] = []) {
   switch (sub) {
     case 'bootstrap': {
       const payload = parseInstallPayload(requireFlag(flags, 'payload'));
       saveBootstrapPayload(payload);
+      // The legacy payload install keeps its secrets where it always has.
+      // Pairing (`arc auth pair`) is what moves them into the keychain.
+      if (isPaired()) migrateSecretsToKeychain();
       console.log(`Bootstrapped ${payload.budgetName || payload.syncId}`);
       break;
     }
+    case 'pair':
+      await handleAuthPair(positional, flags);
+      break;
+    case 'status':
+      await handleAuthStatus(flags);
+      break;
+    case 'unpair':
+      await handleAuthUnpair(flags);
+      break;
     default:
-      throw new Error('Unknown auth subcommand: bootstrap');
+      throw new Error('Unknown auth subcommand. Use: pair <token>, status, unpair, bootstrap');
   }
 }
 
@@ -917,8 +943,10 @@ function handleConfigCommand(sub: string, flags: Record<string, string>) {
         displayUrl: config.displayUrl,
         defaultSyncId: config.defaultSyncId,
         defaultBudgetName: config.defaultBudgetName,
-        hasApiKey: !!config.apiKey,
-        hasEncryptionPassword: !!config.encryptionPassword,
+        secretsIn: config.secretsIn ?? 'config',
+        hasApiKey: !!config.apiKey || (config.secretsIn === 'keychain' && !!keychainApiKey()),
+        hasEncryptionPassword: !!config.encryptionPassword ||
+          (config.secretsIn === 'keychain' && !!keychainEncryptionPassword()),
         budgets: Object.fromEntries(
           Object.entries(config.budgets ?? {}).map(([syncId, budget]) => [
             syncId,
@@ -1376,6 +1404,12 @@ async function handleSessionCommand(sub: string, flags: Record<string, string>) 
   }
 }
 
+/** Commands `executeParsedCommand` (or the one-shot path in `main`) actually runs. */
+export const DATA_COMMANDS: ReadonlySet<string> = new Set([
+  'connect', 'doctor', 'files', 'accounts', 'transactions', 'categories', 'payees', 'tags', 'rules',
+  'schedules', 'budgets', 'query', 'portfolio', 'goals', 'splits',
+]);
+
 export async function executeParsedCommand(
   parsed: ParsedArgs,
   client: ActualClient,
@@ -1550,7 +1584,7 @@ async function runInstaller(): Promise<void> {
 export async function main(
   argv: string[] = process.argv,
   uiLauncher: () => Promise<void> = launchUi,
-  mcpLauncher: () => Promise<void> = startMcpServer
+  mcpLauncher: (options?: { agent?: string }) => Promise<void> = startMcpServer
 ) {
   const { command, subcommand, flags, positional } = parseArgs(argv);
 
@@ -1561,6 +1595,14 @@ export async function main(
     if (isJson(flags)) return printJson(local ?? { version: 'dev' });
     console.log(formatVersion(local));
     return;
+  }
+
+  // A paired machine keeps its secrets in the keychain; move any plaintext an
+  // older install left behind. Unpaired installs are left exactly as they were:
+  // a keychain that is locked over SSH or under cron would otherwise cost a
+  // legacy user their server password with nothing they opted into.
+  if (isPaired()) {
+    try { migrateSecretsToKeychain(); } catch { /* config-store reports a broken config better */ }
   }
 
   if (command === 'update') {
@@ -1602,7 +1644,7 @@ export async function main(
 
   if (command === 'auth') {
     try {
-      await handleAuthCommand(subcommand, flags);
+      await handleAuthCommand(subcommand, flags, positional);
     } catch (error: any) {
       console.error(`Error: ${error.message}`);
       process.exit(1);
@@ -1625,6 +1667,22 @@ export async function main(
     return;
   }
 
+  if (command === 'approvals' || command === 'activity' || command === 'agents' || command === 'agent') {
+    try {
+      const runParsed = (parsed: ParsedArgs) => runDataCommand(parsed, uiLauncher);
+      const code =
+        command === 'approvals' ? await handleApprovals(subcommand, flags, positional, { runParsed })
+        : command === 'agent' ? await handleAgentGroup(subcommand, flags, { runParsed })
+        : command === 'agents' ? await handleAgents(argv[3] && !argv[3].startsWith('--') ? subcommand : 'whoami', flags)
+        : await handleActivity(flags);
+      if (code) process.exit(code);
+    } catch (error: any) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   if (command === 'mcp') {
     try {
       // `arc mcp --http` switches from stdio to a Streamable HTTP server
@@ -1643,7 +1701,8 @@ export async function main(
         const host = getFlag(flags, 'host') || getFlag(flags, 'http-host');
         const token = getFlag(flags, 'token') || getFlag(flags, 'http-token') || process.env.ARC_MCP_HTTP_TOKEN;
         const path = getFlag(flags, 'path') || getFlag(flags, 'http-path');
-        const handle = await startHttpMcpServer({ port, host, token, path });
+        const agent = getFlag(flags, 'agent');
+        const handle = await startHttpMcpServer({ port, host, token, path, agent });
         // Hold the process open until SIGINT/SIGTERM.
         const stop = async (signal: NodeJS.Signals) => {
           console.error(`\nReceived ${signal}, shutting down arc mcp http…`);
@@ -1656,7 +1715,7 @@ export async function main(
         return;
       }
 
-      await mcpLauncher();
+      await mcpLauncher({ agent: getFlag(flags, 'agent') });
     } catch (error: any) {
       console.error(`Error: ${error.message}`);
       process.exit(1);
@@ -1664,6 +1723,39 @@ export async function main(
     return;
   }
 
+  if (!DATA_COMMANDS.has(command)) {
+    console.error(`Unknown command: ${command}`);
+    printHelp();
+    process.exitCode = 1;
+    return;
+  }
+
+  // The CLI's choke point: every data command passes Agent Controls before
+  // it reaches the daemon or Actual. The daemon runs in its own process with
+  // its own environment, so the decision has to be made here, where the
+  // calling agent's environment is.
+  const parsed: ParsedArgs = { command, subcommand, flags, positional };
+  const cliOp = resolveCliOperation(parsed) as Extract<CliOperation, { kind: 'op' }>;
+  let code: number;
+  try {
+    code = await runCliGated(parsed, cliOp.op, () => runDataCommand(parsed, uiLauncher));
+  } catch (error: any) {
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
+  if (code) process.exit(code);
+}
+
+/**
+ * Run a data command that has already been through the gate: hand it to the
+ * session daemon when one is running for this budget, otherwise connect and
+ * run it here. Throws on failure so the gate can record the outcome.
+ */
+export async function runDataCommand(
+  parsed: ParsedArgs,
+  uiLauncher: () => Promise<void> = launchUi
+): Promise<void> {
+  const { command, subcommand, flags, positional } = parsed;
   const requestedBudget = getFlag(flags, 'budget') || process.env.ACTUAL_BUDGET_SYNC_ID;
   const daemonStatus = !process.env.ARC_DAEMON_CHILD && !process.env.ARC_DISABLE_DAEMON ? readStatus() : null;
   const daemonMatchesBudget = !daemonStatus
@@ -1673,17 +1765,21 @@ export async function main(
       : [daemonStatus.budgetRef, daemonStatus.budgetGroupId, daemonStatus.budgetName].includes(requestedBudget);
 
   if (!process.env.ARC_DAEMON_CHILD && !process.env.ARC_DISABLE_DAEMON && isDaemonRunning() && daemonMatchesBudget) {
+    let response;
     try {
-      const response = await sendDaemonRequest({ command, subcommand, flags, positional });
+      // `agent` is informational: the gate already ran in this process.
+      response = await sendDaemonRequest({
+        command, subcommand, flags, positional,
+        agent: { client: detectClientFromEnv().key, surface: 'cli' },
+      });
+    } catch {
+      response = null; // Fall through to one-shot mode if the daemon is stale or unreachable.
+    }
+    if (response) {
       if (response.stderr) process.stderr.write(`${response.stderr}\n`);
       if (response.stdout) process.stdout.write(`${response.stdout}\n`);
-      if (!response.ok) {
-        console.error(`Error: ${response.error}`);
-        process.exit(1);
-      }
+      if (!response.ok) throw new Error(response.error);
       return;
-    } catch {
-      // Fall through to one-shot mode if the daemon is stale or unreachable.
     }
   }
 
@@ -1699,9 +1795,6 @@ export async function main(
   if (command === 'files') {
     try {
       await handleFiles(client, flags);
-    } catch (error: any) {
-      console.error(`Error: ${error.message}`);
-      process.exit(1);
     } finally {
       try { await client.api.shutdown(); } catch {}
     }
@@ -1721,9 +1814,6 @@ export async function main(
           encryptKeyId: entry.isEncrypted ? 'encrypted' : undefined,
         })), client.getConfig().serverURL);
       }
-    } catch (error: any) {
-      console.error(`Error: ${error.message}`);
-      process.exit(1);
     } finally {
       try { await client.api.shutdown(); } catch {}
     }
@@ -1733,9 +1823,6 @@ export async function main(
   if (command === 'budgets' && subcommand === 'switch') {
     try {
       await handleBudgets(client, {} as SafeWriter, subcommand, flags);
-    } catch (error: any) {
-      console.error(`Error: ${error.message}`);
-      process.exit(1);
     } finally {
       try {
         await client.disconnect();
@@ -1752,9 +1839,6 @@ export async function main(
   try {
     await client.connect();
     await executeParsedCommand({ command, subcommand, flags, positional }, client, writer, uiLauncher);
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
-    process.exit(1);
   } finally {
     await client.disconnect();
   }

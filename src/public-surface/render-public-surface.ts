@@ -42,6 +42,7 @@ const GROUP_ORDER: readonly PublicOperationGroup[] = [
   "goals",
   "splits",
   "server",
+  "agent",
 ];
 
 const GROUP_TITLES: Record<PublicOperationGroup, string> = {
@@ -58,6 +59,7 @@ const GROUP_TITLES: Record<PublicOperationGroup, string> = {
   goals: "Goals",
   splits: "Group Splits",
   server: "Server",
+  agent: "Agent",
 };
 
 const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
@@ -81,7 +83,24 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
     "Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.",
   server:
     "Server lifecycle. Managed Arc servers scale to zero, so one that has been idle must start before it can answer. Every other command absorbs this automatically; call `wake` when you would rather pay the wait up front.",
+  agent:
+    "Agent Controls. On a machine paired with the arc app, every operation is checked against the permissions you set on your phone. These two tools let an agent see those permissions and finish a call that waited for your approval. They are never gated, and no tool can approve or deny anything — that takes your Face ID or Touch ID.",
 };
+
+/**
+ * What happens to an operation under the default **Standard** preset on a
+ * paired machine. The phone can change any of it per agent; this is the
+ * starting point a reader needs to predict an approval prompt.
+ */
+export function approvalLabel(op: PublicOperation): string {
+  if (op.group === "agent") return "never asks";
+  if (op.risk === "read") return "runs";
+  if (op.risk === "destructive") return "asks · destructive";
+  return "asks";
+}
+
+const APPROVAL_NOTE =
+  "**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Unpaired installs run everything and keep a local log only.";
 
 function groupOperations(
   ops: readonly PublicOperation[],
@@ -129,6 +148,8 @@ export function renderPublicReadmeSections(): string {
     "Arc exposes the commands below both as CLI subcommands and as MCP tools (`arc mcp`). Every entry is generated from the single operation registry, so the CLI, MCP, and docs always match.",
   );
   lines.push("");
+  lines.push(APPROVAL_NOTE);
+  lines.push("");
 
   for (const group of GROUP_ORDER) {
     const ops = grouped.get(group) ?? [];
@@ -139,7 +160,7 @@ export function renderPublicReadmeSections(): string {
     lines.push("");
     for (const op of ops) {
       lines.push(
-        `- **\`arc ${op.group} ${op.subcommand}\`**${formatAliases(op)} — ${op.description}${advancedTag(op)}`,
+        `- **\`arc ${op.group} ${op.subcommand}\`**${formatAliases(op)} — ${op.description}${advancedTag(op)} _Approval: ${approvalLabel(op)}._`,
       );
       lines.push("");
       lines.push("  ```bash");
@@ -169,6 +190,12 @@ export function renderPublicSkillSections(): string {
     "Each entry is tagged with its mode (`read` or `write`) and exposure tier. Tools tagged `(advanced)` are batch, destructive, or global-state operations; treat them as opt-in and double-check inputs before calling.",
   );
   lines.push("");
+  lines.push(APPROVAL_NOTE);
+  lines.push("");
+  lines.push(
+    "When a call needs approval, the tool waits up to 45 seconds. If the user has not decided by then it returns `{\"status\": \"pending_approval\", \"request_id\": …}` — not an error. Tell the user it is waiting on their phone, then call `arc_agent_request_status` with that `request_id`; it runs the approved call exactly once and returns its result. A denied call returns an error: do not retry it or look for another tool that does the same thing.",
+  );
+  lines.push("");
 
   for (const group of GROUP_ORDER) {
     const ops = grouped.get(group) ?? [];
@@ -187,6 +214,7 @@ export function renderPublicSkillSections(): string {
       lines.push(
         `- mode: **${op.mode}**${exposure}`,
       );
+      lines.push(`- risk: **${op.risk}** · approval under Standard: **${approvalLabel(op)}**`);
       lines.push(`- mcp tool: \`${op.mcpTool}\``);
       lines.push(`- ${op.description}`);
       if (op.examples.length > 0) {

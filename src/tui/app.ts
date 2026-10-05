@@ -188,6 +188,16 @@ const screen = blessed.screen({
   dockBorders: true,
 });
 
+// While the Agents view is open it owns the keyboard: the main screen's keys
+// (q quits, t/r load and sync) must not fire underneath it. Wrapping
+// screen.key here, before any handler is registered, guards every one of them.
+let agentsViewOpen = false;
+{
+  const screenKey = screen.key.bind(screen);
+  (screen as any).key = (keys: any, handler: (...args: any[]) => unknown) =>
+    screenKey(keys, (...args: any[]) => (agentsViewOpen ? undefined : handler(...args)));
+}
+
 // ── Header ────────────────────────────────────────────────────
 
 const header = blessed.box({
@@ -658,7 +668,7 @@ const statusBar = blessed.box({
 function updateStatus(msg?: string) {
   if (msg) state.statusMessage = msg;
   const k = (key: string, label: string) => `{bold}{${T.accent}-fg}${key}{/${T.accent}-fg}{/bold}{${T.muted}-fg}:${label}{/${T.muted}-fg}`;
-  const keys = `${k('q', 'quit')} ${k('a', 'accts')} ${k('t', 'txns')} ${k('b', 'budget')} ${k('c', 'cats')} ${k('p', 'payees')} ${k('n', 'new')} ${k('␣', 'edit')} ${k('r', 'sync')} ${k('F2', 'switch')}`;
+  const keys = `${k('q', 'quit')} ${k('a', 'accts')} ${k('t', 'txns')} ${k('b', 'budget')} ${k('c', 'cats')} ${k('p', 'payees')} ${k('n', 'new')} ${k('␣', 'edit')} ${k('r', 'sync')} ${k('F2', 'switch')} ${k('A', 'agents')}`;
   statusBar.setContent(`  ${state.statusMessage}\n  ${keys}`);
 }
 
@@ -675,6 +685,8 @@ screen.append(statusBar);
 
 let ActualClient: ActualClientType;
 let client: InstanceType<ActualClientType>;
+// Every write goes through Agent Controls and SafeWriter; see ./gated-write.ts.
+let gatedWrite!: import('./gated-write.js').GatedWrite;
 
 async function connect() {
   pushLog('[connect] entering');
@@ -1120,6 +1132,7 @@ for (const key of Object.keys(formFields)) {
     updateStatus(`{${T.accent}-fg}${IC.sparkle} Adding ${addTxnType}...{/${T.accent}-fg}`);
     screen.render();
     try {
+      let written;
       if (addTxnType === 'transfer') {
         // Transfer: hide payee, use To Account
         const toName = formFields.toAcct.getValue();
@@ -1128,29 +1141,35 @@ for (const key of Object.keys(formFields)) {
         if (!toAcct) throw new Error(`Account not found: ${toName}`);
         const xferPayee = state.payees.find((p: any) => p.transfer_acct === toAcct.id);
         if (!xferPayee) throw new Error(`No transfer payee for ${toAcct.name}`);
-        await client.api.addTransactions(account.id, [{
-          date, amount: -Math.abs(Math.round(amount * 100)), // transfers always debit from source
-          payee: xferPayee.id, notes: notes || undefined, cleared: true,
-        }]);
+        const major = Math.abs(amount);
+        written = await gatedWrite('transactions.transfer',
+          { from: account.name, to: toAcct.name, amount: major, date, notes: notes || undefined },
+          'TUI transfer', () => client.api.addTransactions(account.id, [{
+            date, amount: -Math.round(major * 100), // transfers always debit from source
+            payee: xferPayee.id, notes: notes || undefined, cleared: true,
+          }]));
       } else {
         // Expense or Income
         const catName = formFields.category.getValue();
         let catId: string | undefined;
+        let catLabel: string | undefined;
         if (catName) {
           const cat = Object.entries(categoryMap).find(([_, n]) => n.toLowerCase().includes(catName.toLowerCase()));
-          if (cat) catId = cat[0];
+          if (cat) [catId, catLabel] = cat;
         }
         // Expense = negative amount, Income = positive (user enters positive number)
         const amtCents = Math.round(Math.abs(amount) * 100);
         const signedAmt = addTxnType === 'expense' ? -amtCents : amtCents;
-        await client.api.addTransactions(account.id, [{
-          date, amount: signedAmt,
-          payee_name: payeeName || undefined, category: catId,
-          notes: notes || undefined, cleared: true,
-        }]);
+        written = await gatedWrite('transactions.add',
+          { account: account.name, date, amount: signedAmt / 100, payee: payeeName || undefined,
+            category: catLabel, notes: notes || undefined },
+          `TUI add ${addTxnType}`, () => client.api.addTransactions(account.id, [{
+            date, amount: signedAmt,
+            payee_name: payeeName || undefined, category: catId,
+            notes: notes || undefined, cleared: true,
+          }]));
       }
-      await client.api.sync();
-      updateStatus(`{${T.green}-fg}${IC.check} ${addTxnType} added{/${T.green}-fg}`);
+      if (written.ok) updateStatus(`{${T.green}-fg}${IC.check} ${addTxnType} added{/${T.green}-fg}`);
       await loadTransactions();
     } catch (err: any) {
       updateStatus(`{${T.red}-fg}${IC.cross} ${err.message}{/${T.red}-fg}`);
@@ -1222,9 +1241,10 @@ for (const key of editOrder) {
     updateStatus(`{${T.red}-fg}Deleting...{/${T.red}-fg}`);
     screen.render();
     try {
-      await client.api.deleteTransaction(editingTxnId);
-      await client.api.sync();
-      updateStatus(`{${T.green}-fg}${IC.check} Deleted{/${T.green}-fg}`);
+      const id = editingTxnId;
+      const written = await gatedWrite('transactions.delete', { id }, 'TUI delete transaction',
+        () => client.api.deleteTransaction(id));
+      if (written.ok) updateStatus(`{${T.green}-fg}${IC.check} Deleted{/${T.green}-fg}`);
       await loadTransactions();
     } catch (err: any) {
       updateStatus(`{${T.red}-fg}${IC.cross} ${err.message}{/${T.red}-fg}`);
@@ -1237,39 +1257,45 @@ for (const key of editOrder) {
     updateStatus(`{${T.accent}-fg}${IC.sparkle} Saving...{/${T.accent}-fg}`);
     screen.render();
     try {
+      const id = editingTxnId;
       const fields: any = {};
+      const shown: Record<string, unknown> = { id };
       const newDate = editFields.date.getValue();
       const newAmt = editFields.amount.getValue();
       const newNotes = editFields.notes.getValue();
 
-      if (newDate) fields.date = newDate;
-      if (newAmt && !isNaN(parseFloat(newAmt))) fields.amount = Math.round(parseFloat(newAmt) * 100);
-      if (newNotes !== undefined) fields.notes = newNotes;
+      if (newDate) fields.date = shown.date = newDate;
+      if (newAmt && !isNaN(parseFloat(newAmt))) {
+        fields.amount = Math.round(parseFloat(newAmt) * 100);
+        shown.amount = fields.amount / 100;
+      }
+      if (newNotes !== undefined) fields.notes = shown.notes = newNotes;
 
       // Resolve category name to ID
       const catInput = editFields.category.getValue()?.trim();
       if (catInput) {
         const catLower = catInput.toLowerCase();
         const catId = Object.entries(categoryMap).find(([_, name]) => name.toLowerCase() === catLower || name.toLowerCase().includes(catLower));
-        if (catId) fields.category = catId[0];
+        if (catId) {
+          fields.category = catId[0];
+          shown.category = catId[1];
+        }
       }
 
       // Resolve payee name
       const payeeInput = editFields.payee.getValue()?.trim();
-      if (payeeInput) {
-        const existingPayee = state.payees.find((p: any) => p.name.toLowerCase() === payeeInput.toLowerCase());
-        if (existingPayee) {
-          fields.payee = existingPayee.id;
-        } else {
-          // Create new payee
-          const newPayee = await client.api.createPayee({ name: payeeInput });
-          fields.payee = newPayee;
-        }
-      }
+      const existingPayee = payeeInput
+        ? state.payees.find((p: any) => p.name.toLowerCase() === payeeInput.toLowerCase())
+        : undefined;
+      if (payeeInput) shown.payee = payeeInput;
 
-      await client.api.updateTransaction(editingTxnId, fields);
-      await client.api.sync();
-      updateStatus(`{${T.green}-fg}${IC.check} Updated{/${T.green}-fg}`);
+      const written = await gatedWrite('transactions.update', shown, 'TUI update transaction', async () => {
+        if (existingPayee) fields.payee = existingPayee.id;
+        // A new payee is created inside the approved write, not before it.
+        else if (payeeInput) fields.payee = await client.api.createPayee({ name: payeeInput });
+        await client.api.updateTransaction(id, fields);
+      });
+      if (written.ok) updateStatus(`{${T.green}-fg}${IC.check} Updated{/${T.green}-fg}`);
       await loadTransactions();
     } catch (err: any) {
       updateStatus(`{${T.red}-fg}${IC.cross} ${err.message}{/${T.red}-fg}`);
@@ -1409,12 +1435,16 @@ budgetEditInput.key(['enter'], async () => {
 
   try {
     const month = state.budgetMonths[state.budgetMonths.length - 1];
-    await client.api.setBudgetAmount(month, editingBudgetCat.categoryId, Math.round(amount * 100));
-    await client.api.sync();
+    const target = editingBudgetCat;
+    const written = await gatedWrite('budgets.set-amount',
+      { month, category: target.name, amount }, 'TUI set budget amount',
+      () => client.api.setBudgetAmount(month, target.categoryId, Math.round(amount * 100)));
     // Refresh budget data
     state.budgetData = await client.api.getBudgetMonth(month);
     renderBudget();
-    updateStatus(`{${T.green}-fg}${IC.check} Budget set: ${editingBudgetCat.name} = ${formatAmount(Math.round(amount * 100))}{/${T.green}-fg}`);
+    if (written.ok) {
+      updateStatus(`{${T.green}-fg}${IC.check} Budget set: ${target.name} = ${formatAmount(Math.round(amount * 100))}{/${T.green}-fg}`);
+    }
   } catch (err: any) {
     updateStatus(`{${T.red}-fg}${IC.cross} ${err.message}{/${T.red}-fg}`);
   }
@@ -1557,13 +1587,17 @@ budgetSwitcher.key(['enter'], async () => {
     state.budgetData = null;
     state.connected = false;
 
-    await client.switchBudget({
-      budgetRef: target.groupId || target.cloudFileId,
-      isInteractive: true,
-      promptForPassword: async (context) => promptForBudgetPassword(context.name),
-    });
+    const budgetRef = target.groupId || target.cloudFileId;
+    // Switching rewrites the saved default budget, not budget data: gated, but not through SafeWriter.
+    const written = await gatedWrite('budgets.switch', { budget: budgetRef }, 'TUI switch budget', () =>
+      client.switchBudget({
+        budgetRef,
+        isInteractive: true,
+        promptForPassword: async (context) => promptForBudgetPassword(context.name),
+      }), { viaWriter: false });
     state.connected = true;
     await refreshConnectedState();
+    if (!written.ok) return;
   } catch (err: any) {
     updateStatus(`{${T.red}-fg}${IC.cross} Switch failed: ${err.message}{/${T.red}-fg}`);
     screen.render();
@@ -1573,6 +1607,69 @@ budgetSwitcher.key(['enter'], async () => {
 // ── Start ─────────────────────────────────────────────────────
 
 ({ ActualClient } = await import('../client.js'));
+
+{
+  const { createTuiGate } = await import('./gated-write.js');
+  gatedWrite = createTuiGate({
+    screen,
+    client: () => client,
+    budgetName: () => state.budgetName,
+    status: (msg) => { updateStatus(msg); screen.render(); },
+    colors: { brass: '#C9A44C', vermilion: '#E5533D', muted: T.muted, fg: T.fg, bg: '#1a1a2e' },
+  });
+}
+
+// ── Agents view (A) ───────────────────────────────────────────
+// Pending approvals, the agents using this machine, and their live timeline.
+let agentsView: import('./agents-view.js').AgentsView | null = null;
+
+screen.key(['S-a', 'A'], async () => {
+  const [{ createAgentsView }, gate, journal, pendingMod, approve, mac] = await Promise.all([
+    import('./agents-view.js'),
+    import('../agent-controls/gate.js'),
+    import('../agent-controls/journal.js'),
+    import('../agent-controls/pending.js'),
+    import('../agent-controls/approve-mac.js'),
+    import('../agent-controls/mac-approver.js'),
+  ]);
+  const runtime = gate.createGateRuntime();
+  if (!runtime.api || !runtime.connection) {
+    updateStatus(`{${T.muted}-fg}Not paired: agents run without asking. Pair from the arc app (Settings → AI agents).{/${T.muted}-fg}`);
+    screen.render();
+    return;
+  }
+  const { api, connection } = runtime;
+  if (!agentsView) {
+    agentsView = createAgentsView(screen, {
+      api,
+      journal: journal.journalLookup(journal.readJournal()),
+      connections: {
+        [connection.state.connectionId]: {
+          label: connection.state.label, hostname: connection.state.hostname, intendedClient: connection.state.intendedClient,
+        },
+      },
+      macApprover: connection.state.macDeviceId && process.platform === 'darwin'
+        ? {
+            available: () => mac.isAvailable(),
+            approve: async (requestId: string) => {
+              const call = pendingMod.loadPending(requestId);
+              if (!call) throw new Error('Made on another machine: approve it on your phone.');
+              await approve.approveWithMac({ api, connection }, call);
+            },
+          }
+        : undefined,
+      onClose: () => {
+        agentsViewOpen = false;
+        agentsView?.hide();
+        sidebar.focus();
+        screen.render();
+      },
+    });
+  }
+  agentsViewOpen = true;
+  agentsView.show();
+  screen.render();
+});
 
 sidebar.focus();
 updateHeader();

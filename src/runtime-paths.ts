@@ -5,7 +5,9 @@ function getHomeDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.HOME || os.homedir();
 }
 
+/** `~/.arc-cli`, or `ARC_CONFIG_DIR` for a second install or an isolated run. */
 export function getArcHome(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.ARC_CONFIG_DIR) return path.resolve(env.ARC_CONFIG_DIR);
   return path.join(getHomeDir(env), '.arc-cli');
 }
 

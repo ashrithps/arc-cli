@@ -2,6 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { getArcConfigPath } from './runtime-paths.js';
 import type { BudgetFile, InstallPayload, RuntimeBudgetProfile, RuntimeConfig } from './types.js';
+import {
+  deleteKeychainSecret,
+  keychainBudgetPassword,
+  moveSecretsToKeychain,
+  SECRET_KEYS,
+  secretsInKeychain,
+} from './agent-controls/credentials.js';
 
 type StoredRuntimeConfig = Partial<RuntimeConfig>;
 
@@ -21,6 +28,8 @@ function readStoredConfig(env: NodeJS.ProcessEnv = process.env): StoredRuntimeCo
 }
 
 function writeStoredConfig(config: StoredRuntimeConfig, env: NodeJS.ProcessEnv = process.env): void {
+  // Once a config is keychain-backed, no write path may put a secret back on disk.
+  if (secretsInKeychain(config)) config = moveSecretsToKeychain(config, env) as StoredRuntimeConfig;
   const filePath = getArcConfigPath(env);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
@@ -67,7 +76,11 @@ export function getBudgetMetadata(
 }
 
 export function getBudgetPassword(syncId: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return getBudgetMetadata(syncId, env)?.encryptionPassword;
+  const config = readStoredConfig(env);
+  const profile = config.budgets?.[syncId];
+  if (profile?.encryptionPassword) return profile.encryptionPassword;
+  if (secretsInKeychain(config) && profile?.hasSavedPassword !== false) return keychainBudgetPassword(syncId, env);
+  return undefined;
 }
 
 export function saveBudgetMetadata(
@@ -123,7 +136,7 @@ export function persistBudgetCatalog(
         syncId,
         budgetName: budget.name,
         isEncrypted: !!budget.encryptKeyId,
-        hasSavedPassword: !!existing?.encryptionPassword,
+        hasSavedPassword: !!existing?.encryptionPassword || existing?.hasSavedPassword === true,
         encryptionPassword: existing?.encryptionPassword,
       });
       nextBudgets[syncId] = profile;
@@ -146,6 +159,7 @@ export function persistSelectedBudget(
       config.encryptionPassword = profile.encryptionPassword;
     } else {
       delete config.encryptionPassword;
+      if (secretsInKeychain(config)) deleteKeychainSecret(SECRET_KEYS.encryptionPassword, env);
     }
     return config;
   }, env);

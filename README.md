@@ -26,11 +26,26 @@ arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actua
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 ```
 
-If you copied a payload-backed command from the **Apps** section of your [arc](https://arc.moi) settings, run that exact command instead. It bootstraps arc directly into your current budget without any manual config.
+### Pair with the arc app (recommended)
 
-### One-Command Payload Bootstrap
+In the arc app, open **Settings → AI agents → Connect a machine**, choose how much agents may do, and copy the command it shows:
 
-The payload command is:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --pair <token> --agent claude-code
+```
+
+The installer prints four words. Check that they match the ones on your phone, then approve with Face ID. Your budget's credentials arrive sealed to this machine's key and go straight into the macOS Keychain (or the Linux Secret Service), never into a file. From then on:
+
+- **Agents ask before they change anything.** Under the default **Standard** preset, reads run and every change waits for your approval on your phone. You can set each agent to Full, Standard or Private, override any group or operation, and approve once, for 15 or 60 minutes, or always.
+- **Touch ID on this Mac.** `arc approvals enroll-mac` lets you approve writes here with Touch ID. Destructive changes always go to your phone.
+- **A tamper-evident timeline.** `arc activity` shows what every agent did, day by day, and checks the server's hash chain so a rewritten history shows up as one.
+- `arc agents whoami` shows what the current agent may do. `arc auth status` shows the pairing.
+
+Already installed? Run `arc auth pair <token>` with the token from the app.
+
+### One-Command Payload Bootstrap (legacy)
+
+The payload command still works, without approvals, for anyone on an arc app that does not have **Connect a machine** yet:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- --payload '<json-payload>'
@@ -48,14 +63,14 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 90 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 92 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
 arc mcp --http
 
-# Custom port + token, ready to expose via tunnel
-arc mcp --http --port 8765 --token $(openssl rand -hex 32)
+# Custom port + token, ready to expose via tunnel; tag calls for approvals
+arc mcp --http --port 8765 --token $(openssl rand -hex 32) --agent claude-web
 
 # Tunnel it (example with cloudflare quick tunnel — no account needed)
 cloudflared tunnel --url http://127.0.0.1:8765
@@ -72,12 +87,13 @@ Security:
 - Bearer token is required for any non-loopback bind. Constant-time compared to defeat timing probes.
 - Default bind is `127.0.0.1` — pass `--host 0.0.0.0` only when intentionally exposing.
 - The token is printed on stderr at startup; redirect or capture it.
-- Anyone with the URL + token gets full read **and write** access to the budget. Treat the token like the Actual API key.
+- Anyone with the URL + token gets full read **and write** access to the budget. Treat the token like the Actual API key. On a paired machine their calls still go through your approvals; `--agent` names them (default `remote`).
 
 ## Runtime
 
 - Installed app snapshot: `~/.arc-cli/app`
-- Installed config: `~/.arc-cli/config.json`
+- Installed config: `~/.arc-cli/config.json` (on a paired machine it holds no secrets: those live in the Keychain / Secret Service, service `arc-cli`)
+- Agent activity journal: `~/.arc-cli/activity.jsonl` (this machine only)
 - Launcher: `~/.local/bin/arc`
 - Switch budgets later with `arc budgets switch --budget <id>`
 - `arc ui` launches the TUI
@@ -119,8 +135,10 @@ above; running it again is always safe.
 ## Security Notes
 
 - macOS-first installer (Linux works for the CLI; the Claude Desktop merge step is a no-op elsewhere).
-- Payload-backed install commands embed credentials. Only run them on trusted machines.
-- Per-budget encryption passwords are stored in the credential store after the first successful unlock.
+- `--pair` install commands carry only a short-lived pairing token; credentials arrive sealed to this machine after you approve it with Face ID.
+- Legacy payload-backed install commands embed credentials. Only run them on trusted machines.
+- On a paired machine the Actual password and per-budget encryption passwords live in the macOS Keychain or the Linux Secret Service, not in `config.json`; pairing moves them there. Unpaired installs keep them where they always were, so updating changes nothing until you pair. With no Secret Service (a headless Linux server), they stay in `config.json` and arc says so once.
+- Agent Controls stops agents from doing what you did not allow through arc's CLI, MCP and TUI. It does not stop a hostile program running as you from reading the Keychain directly.
 
 ## Commands
 
@@ -129,47 +147,49 @@ above; running it again is always safe.
 
 Arc exposes the commands below both as CLI subcommands and as MCP tools (`arc mcp`). Every entry is generated from the single operation registry, so the CLI, MCP, and docs always match.
 
+**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Unpaired installs run everything and keep a local log only.
+
 ## Accounts
 
 Manage on- and off-budget accounts and balances.
 
-- **`arc accounts list`** — List all accounts in the active budget with balances and on/off-budget status.
+- **`arc accounts list`** — List all accounts in the active budget with balances and on/off-budget status. _Approval: runs._
 
   ```bash
   arc accounts list
   ```
 
-- **`arc accounts balance`** — Show the current balance of a single account.
+- **`arc accounts balance`** — Show the current balance of a single account. _Approval: runs._
 
   ```bash
   arc accounts balance --account 'HDFC Checking'
   ```
 
-- **`arc accounts create`** — Create a new account, optionally off-budget and with a starting balance.
+- **`arc accounts create`** — Create a new account, optionally off-budget and with a starting balance. _Approval: asks._
 
   ```bash
   arc accounts create --name 'Brokerage' --type investment --offbudget true
   ```
 
-- **`arc accounts update`** — Update an account's name, type, or on/off-budget flag.
+- **`arc accounts update`** — Update an account's name, type, or on/off-budget flag. _Approval: asks._
 
   ```bash
   arc accounts update --id 'Cash' --name 'Wallet'
   ```
 
-- **`arc accounts close`** — Close an account, optionally transferring its remaining balance to another account.
+- **`arc accounts close`** — Close an account, optionally transferring its remaining balance to another account. _Approval: asks · destructive._
 
   ```bash
   arc accounts close --id 'Old Card' --transfer-to 'New Card'
   ```
 
-- **`arc accounts reopen`** — Reopen a previously closed account.
+- **`arc accounts reopen`** — Reopen a previously closed account. _Approval: asks._
 
   ```bash
   arc accounts reopen --id 'Old Card'
   ```
 
-- **`arc accounts delete`** — Permanently delete an account. Destructive — prefer close in most cases. _(advanced)_
+- **`arc accounts delete`** — Permanently delete an account. Destructive — prefer close in most cases. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc accounts delete --id 'Test Account'
@@ -179,79 +199,79 @@ Manage on- and off-budget accounts and balances.
 
 Create, update, split, transfer, and batch-process transactions.
 
-- **`arc transactions list`** — List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set).
+- **`arc transactions list`** — List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set). _Approval: runs._
 
   ```bash
   arc transactions list --account 'HDFC Checking'
   ```
 
-- **`arc transactions add`** — Add a single transaction to an account. Generates a deterministic imported_id when omitted.
+- **`arc transactions add`** — Add a single transaction to an account. Generates a deterministic imported_id when omitted. _Approval: asks._
 
   ```bash
   arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 'Coffee Shop' --category 'Dining'
   ```
 
-- **`arc transactions import`** — Bulk-import transactions into an account from a JSON array, with automatic de-duplication.
+- **`arc transactions import`** — Bulk-import transactions into an account from a JSON array, with automatic de-duplication. _Approval: asks._
 
   ```bash
   arc transactions import --account 'Card' '[{"date":"2026-04-01","amount":-1234,"payee_name":"Amazon"}]'
   ```
 
-- **`arc transactions update`** — Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose.
+- **`arc transactions update`** — Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose. _Approval: asks._
 
   ```bash
   arc transactions update --id <txn-id> --category 'Groceries' --notes 'Weekly run'
   ```
 
-- **`arc transactions delete`** — Delete a transaction by id.
+- **`arc transactions delete`** — Delete a transaction by id. _Approval: asks · destructive._
 
   ```bash
   arc transactions delete --id <txn-id>
   ```
 
-- **`arc transactions split`** — Create a split transaction with one or more child sub-transactions.
+- **`arc transactions split`** — Create a split transaction with one or more child sub-transactions. _Approval: asks._
 
   ```bash
   arc transactions split --account 'Card' --date 2026-04-01 --payee 'Costco' --subs '[{"amount":-50,"category":"Groceries"},{"amount":-20,"category":"Household"}]'
   ```
 
-- **`arc transactions transfer`** — Create a linked transfer between two accounts.
+- **`arc transactions transfer`** — Create a linked transfer between two accounts. _Approval: asks._
 
   ```bash
   arc transactions transfer --from 'Checking' --to 'Savings' --amount 500 --date 2026-04-10
   ```
 
-- **`arc transactions refund`** — Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows.
+- **`arc transactions refund`** — Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows. _Approval: asks._
 
   ```bash
   arc transactions refund --id <transaction-id>
   ```
 
-- **`arc transactions unrefund`** — Undo a refund, restoring the original amount, its direction (expense or income), and the note.
+- **`arc transactions unrefund`** — Undo a refund, restoring the original amount, its direction (expense or income), and the note. _Approval: asks._
 
   ```bash
   arc transactions unrefund --id <transaction-id>
   ```
 
-- **`arc transactions refunds`** — List refunded transactions with the original amount recovered from the refund token, and when each was marked.
+- **`arc transactions refunds`** — List refunded transactions with the original amount recovered from the refund token, and when each was marked. _Approval: runs._
 
   ```bash
   arc transactions refunds
   ```
 
-- **`arc transactions batch-update`** — Apply field updates to many transactions in one call. Accepts a JSON array of {id, ...fields}. _(advanced)_
+- **`arc transactions batch-update`** — Apply field updates to many transactions in one call. Accepts a JSON array of {id, ...fields}. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc transactions batch-update '[{"id":"...","category":"Dining"},{"id":"...","notes":"vacation"}]'
   ```
 
-- **`arc transactions batch-add`** — Bulk-add transactions to an account, resolving category names and generating imported_ids. _(advanced)_
+- **`arc transactions batch-add`** — Bulk-add transactions to an account, resolving category names and generating imported_ids. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc transactions batch-add --account 'Card' '[{"date":"2026-04-01","amount":-12.5,"payee_name":"Bakery"}]'
   ```
 
-- **`arc transactions batch-categorize`** — Categorize all uncategorized transactions in an account whose payee matches a substring pattern. _(advanced)_
+- **`arc transactions batch-categorize`** — Categorize all uncategorized transactions in an account whose payee matches a substring pattern. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc transactions batch-categorize --account 'Card' --payee 'starbucks' --category 'Dining'
@@ -261,25 +281,25 @@ Create, update, split, transfer, and batch-process transactions.
 
 Manage category groups and individual categories.
 
-- **`arc categories list`** — List all category groups and their categories.
+- **`arc categories list`** — List all category groups and their categories. _Approval: runs._
 
   ```bash
   arc categories list
   ```
 
-- **`arc categories create`** — Create a new category inside an existing category group.
+- **`arc categories create`** — Create a new category inside an existing category group. _Approval: asks._
 
   ```bash
   arc categories create --name 'Coffee' --group 'Food'
   ```
 
-- **`arc categories update`** — Rename a category, move it to a different group, or toggle hidden.
+- **`arc categories update`** — Rename a category, move it to a different group, or toggle hidden. _Approval: asks._
 
   ```bash
   arc categories update --id 'Coffee' --group 'Dining'
   ```
 
-- **`arc categories delete`** — Delete a category, optionally transferring its transactions and budget to another category. _(advanced)_
+- **`arc categories delete`** — Delete a category, optionally transferring its transactions and budget to another category. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc categories delete --id 'Old' --transfer-to 'New'
@@ -289,43 +309,43 @@ Manage category groups and individual categories.
 
 Manage payees, merge duplicates, and look up usage.
 
-- **`arc payees list`** — List all payees. Pass --all to include hidden / system payees.
+- **`arc payees list`** — List all payees. Pass --all to include hidden / system payees. _Approval: runs._
 
   ```bash
   arc payees list
   ```
 
-- **`arc payees create`** — Create a new payee by name.
+- **`arc payees create`** — Create a new payee by name. _Approval: asks._
 
   ```bash
   arc payees create --name 'Local Bakery'
   ```
 
-- **`arc payees update`** — Rename an existing payee.
+- **`arc payees update`** — Rename an existing payee. _Approval: asks._
 
   ```bash
   arc payees update --id 'Bakery' --name 'Local Bakery'
   ```
 
-- **`arc payees find-or-create`** — Look up a payee by name and create it if missing. Returns the payee id.
+- **`arc payees find-or-create`** — Look up a payee by name and create it if missing. Returns the payee id. _Approval: asks._
 
   ```bash
   arc payees find-or-create --name 'Local Bakery'
   ```
 
-- **`arc payees common`** — List the most frequently used payees, ordered by transaction count.
+- **`arc payees common`** — List the most frequently used payees, ordered by transaction count. _Approval: runs._
 
   ```bash
   arc payees common --limit 10
   ```
 
-- **`arc payees delete`** — Delete a payee. Linked transactions become payee-less. _(advanced)_
+- **`arc payees delete`** — Delete a payee. Linked transactions become payee-less. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc payees delete --id 'Old Vendor'
   ```
 
-- **`arc payees merge`** — Merge one or more payees into a target payee. Comma-separated source list. _(advanced)_
+- **`arc payees merge`** — Merge one or more payees into a target payee. Comma-separated source list. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc payees merge --target 'Amazon' --merge 'AMZN,Amazon.com,Amzn Mktp'
@@ -335,37 +355,37 @@ Manage payees, merge duplicates, and look up usage.
 
 Manage Actual Budget tags (color, description) and apply / unapply them on transactions. Tag membership lives in transaction notes as `#tag`.
 
-- **`arc tags list`** — List all tags with their colors and optional descriptions.
+- **`arc tags list`** — List all tags with their colors and optional descriptions. _Approval: runs._
 
   ```bash
   arc tags list
   ```
 
-- **`arc tags add`** — Create a new tag. The leading `#` is optional and stripped if present.
+- **`arc tags add`** — Create a new tag. The leading `#` is optional and stripped if present. _Approval: asks._
 
   ```bash
   arc tags add --name Quantini
   ```
 
-- **`arc tags update`** — Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID.
+- **`arc tags update`** — Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID. _Approval: asks._
 
   ```bash
   arc tags update --id Quantini --color '#FF6B6B'
   ```
 
-- **`arc tags apply`** — Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent.
+- **`arc tags apply`** — Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent. _Approval: asks._
 
   ```bash
   arc tags apply --transaction <tx-id> --tag Quantini
   ```
 
-- **`arc tags unapply`** — Remove one or more `#tag` tokens from a transaction's notes.
+- **`arc tags unapply`** — Remove one or more `#tag` tokens from a transaction's notes. _Approval: asks._
 
   ```bash
   arc tags unapply --transaction <tx-id> --tag Quantini
   ```
 
-- **`arc tags delete`** — Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately. _(advanced)_
+- **`arc tags delete`** — Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc tags delete --id Quantini
@@ -375,25 +395,25 @@ Manage Actual Budget tags (color, description) and apply / unapply them on trans
 
 Define and maintain auto-categorization and payee-cleanup rules.
 
-- **`arc rules list`** — List all transaction rules in the active budget.
+- **`arc rules list`** — List all transaction rules in the active budget. _Approval: runs._
 
   ```bash
   arc rules list
   ```
 
-- **`arc rules create`** — Create a rule from a JSON payload. Account/category/payee names in conditions and actions are auto-resolved to ids.
+- **`arc rules create`** — Create a rule from a JSON payload. Account/category/payee names in conditions and actions are auto-resolved to ids. _Approval: asks._
 
   ```bash
   arc rules create '{"stage":"pre","conditionsOp":"and","conditions":[{"field":"payee","op":"is","value":"Starbucks"}],"actions":[{"field":"category","op":"set","value":"Dining"}]}'
   ```
 
-- **`arc rules update`** — Update an existing rule. The JSON payload must include the rule id.
+- **`arc rules update`** — Update an existing rule. The JSON payload must include the rule id. _Approval: asks._
 
   ```bash
   arc rules update '{"id":"...","actions":[...]}'
   ```
 
-- **`arc rules delete`** — Delete a rule by id.
+- **`arc rules delete`** — Delete a rule by id. _Approval: asks · destructive._
 
   ```bash
   arc rules delete --id <rule-id>
@@ -403,43 +423,43 @@ Define and maintain auto-categorization and payee-cleanup rules.
 
 Manage recurring schedules and post them as transactions.
 
-- **`arc schedules list`** — List all recurring schedules.
+- **`arc schedules list`** — List all recurring schedules. _Approval: runs._
 
   ```bash
   arc schedules list
   ```
 
-- **`arc schedules create`** — Create a recurring schedule from a JSON payload. Account/category/payee names are auto-resolved.
+- **`arc schedules create`** — Create a recurring schedule from a JSON payload. Account/category/payee names are auto-resolved. _Approval: asks._
 
   ```bash
   arc schedules create '{"name":"Rent","account":"Checking","payee":"Landlord","amount":-150000,"date":{"start":"2026-05-01","frequency":"monthly"}}'
   ```
 
-- **`arc schedules update`** — Update an existing schedule by id with a JSON payload of fields to change.
+- **`arc schedules update`** — Update an existing schedule by id with a JSON payload of fields to change. _Approval: asks._
 
   ```bash
   arc schedules update --id <sched-id> '{"amount":-160000}'
   ```
 
-- **`arc schedules delete`** — Delete a schedule by id.
+- **`arc schedules delete`** — Delete a schedule by id. _Approval: asks · destructive._
 
   ```bash
   arc schedules delete --id <sched-id>
   ```
 
-- **`arc schedules post`** — Materialize a schedule as a real transaction on the given date (defaults to next due date).
+- **`arc schedules post`** — Materialize a schedule as a real transaction on the given date (defaults to next due date). _Approval: asks._
 
   ```bash
   arc schedules post --id <sched-id>
   ```
 
-- **`arc schedules upcoming`** — List schedules sorted by next due date.
+- **`arc schedules upcoming`** — List schedules sorted by next due date. _Approval: runs._
 
   ```bash
   arc schedules upcoming
   ```
 
-- **`arc schedules complete`** — Mark a schedule as completed so it stops generating new occurrences.
+- **`arc schedules complete`** — Mark a schedule as completed so it stops generating new occurrences. _Approval: asks._
 
   ```bash
   arc schedules complete --id <sched-id>
@@ -449,55 +469,55 @@ Manage recurring schedules and post them as transactions.
 
 Inspect budget months, set budgeted amounts, and switch between budgets.
 
-- **`arc budgets list`** — List budget files available on the configured Actual server.
+- **`arc budgets list`** — List budget files available on the configured Actual server. _Approval: runs._
 
   ```bash
   arc budgets list
   ```
 
-- **`arc budgets months`** — List the budget months Actual has data for.
+- **`arc budgets months`** — List the budget months Actual has data for. _Approval: runs._
 
   ```bash
   arc budgets months
   ```
 
-- **`arc budgets month`** (alias: `show`) — Show the full budget for a single month (categories, budgeted, spent, balance).
+- **`arc budgets month`** (alias: `show`) — Show the full budget for a single month (categories, budgeted, spent, balance). _Approval: runs._
 
   ```bash
   arc budgets month --month 2026-04
   ```
 
-- **`arc budgets set-amount`** — Set the budgeted amount for a category in a given month.
+- **`arc budgets set-amount`** — Set the budgeted amount for a category in a given month. _Approval: asks._
 
   ```bash
   arc budgets set-amount --month 2026-04 --category 'Groceries' --amount 600
   ```
 
-- **`arc budgets set-carryover`** — Enable or disable budget carryover (rollover) for a category in a given month.
+- **`arc budgets set-carryover`** — Enable or disable budget carryover (rollover) for a category in a given month. _Approval: asks._
 
   ```bash
   arc budgets set-carryover --month 2026-04 --category 'Travel' --enabled true
   ```
 
-- **`arc budgets transfer`** — Move budgeted money between two categories within the same month.
+- **`arc budgets transfer`** — Move budgeted money between two categories within the same month. _Approval: asks._
 
   ```bash
   arc budgets transfer --month 2026-04 --from 'Dining' --to 'Groceries' --amount 50
   ```
 
-- **`arc budgets income`** — Show income categories with budgeted vs received totals for a month.
+- **`arc budgets income`** — Show income categories with budgeted vs received totals for a month. _Approval: runs._
 
   ```bash
   arc budgets income --month 2026-04
   ```
 
-- **`arc budgets summary`** (alias: `totals`) — Top-line totals for a month: total budgeted, spent, balance, and to-budget.
+- **`arc budgets summary`** (alias: `totals`) — Top-line totals for a month: total budgeted, spent, balance, and to-budget. _Approval: runs._
 
   ```bash
   arc budgets summary --month 2026-04
   ```
 
-- **`arc budgets switch`** — Switch the active budget file for subsequent commands. Persists the selection in the credential store. _(advanced)_
+- **`arc budgets switch`** — Switch the active budget file for subsequent commands. Persists the selection in the credential store. _(advanced)_ _Approval: asks._
 
   ```bash
   arc budgets switch --budget 'Family Budget'
@@ -507,67 +527,67 @@ Inspect budget months, set budgeted amounts, and switch between budgets.
 
 Read-only reports and ad-hoc Actual queries.
 
-- **`arc query spending`** — Spending summary for a month broken down by category.
+- **`arc query spending`** — Spending summary for a month broken down by category. _Approval: runs._
 
   ```bash
   arc query spending --month 2026-04
   ```
 
-- **`arc query accounts`** (alias: `summary`) — Account summary report with balances and on/off-budget grouping.
+- **`arc query accounts`** (alias: `summary`) — Account summary report with balances and on/off-budget grouping. _Approval: runs._
 
   ```bash
   arc query accounts
   ```
 
-- **`arc query uncategorized`** — List uncategorized transactions, optionally scoped to one account.
+- **`arc query uncategorized`** — List uncategorized transactions, optionally scoped to one account. _Approval: runs._
 
   ```bash
   arc query uncategorized
   ```
 
-- **`arc query payee`** — Recent transactions for a single payee across all accounts.
+- **`arc query payee`** — Recent transactions for a single payee across all accounts. _Approval: runs._
 
   ```bash
   arc query payee --name 'Amazon' --limit 50
   ```
 
-- **`arc query category`** — Transactions in a single category, optionally filtered by date range.
+- **`arc query category`** — Transactions in a single category, optionally filtered by date range. _Approval: runs._
 
   ```bash
   arc query category --name 'Groceries' --start 2026-01-01 --end 2026-03-31
   ```
 
-- **`arc query trends`** — Per-category spending trend over the last N months.
+- **`arc query trends`** — Per-category spending trend over the last N months. _Approval: runs._
 
   ```bash
   arc query trends --months 6
   ```
 
-- **`arc query top`** (alias: `top-categories`) — Top spending categories for a month, ranked by amount spent.
+- **`arc query top`** (alias: `top-categories`) — Top spending categories for a month, ranked by amount spent. _Approval: runs._
 
   ```bash
   arc query top --month 2026-04 --limit 10
   ```
 
-- **`arc query monthly`** (alias: `monthly-totals`) — Income, expenses, and net totals per month for the last N months.
+- **`arc query monthly`** (alias: `monthly-totals`) — Income, expenses, and net totals per month for the last N months. _Approval: runs._
 
   ```bash
   arc query monthly --months 12
   ```
 
-- **`arc query balance-history`** — Daily running balance for an account over the last N months.
+- **`arc query balance-history`** — Daily running balance for an account over the last N months. _Approval: runs._
 
   ```bash
   arc query balance-history --account 'Checking' --months 6
   ```
 
-- **`arc query monthly-balances`** — End-of-month balance series for an account over the last N months.
+- **`arc query monthly-balances`** — End-of-month balance series for an account over the last N months. _Approval: runs._
 
   ```bash
   arc query monthly-balances --account 'Checking' --months 12
   ```
 
-- **`arc query custom`** — Run a raw Actual query (ActualQL JSON). Advanced — for power users only. _(advanced)_
+- **`arc query custom`** — Run a raw Actual query (ActualQL JSON). Advanced — for power users only. _(advanced)_ _Approval: runs._
 
   ```bash
   arc query custom --q '{"table":"transactions","select":["id","amount"]}'
@@ -577,31 +597,31 @@ Read-only reports and ad-hoc Actual queries.
 
 Track investment holdings and trade activity (read-only). Investment data lives in account notes (`#investment:` / `#hold:v1:`) and `#act:`-tagged transactions.
 
-- **`arc portfolio list`** — List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %).
+- **`arc portfolio list`** — List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %). _Approval: runs._
 
   ```bash
   arc portfolio list
   ```
 
-- **`arc portfolio holding`** — Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger.
+- **`arc portfolio holding`** — Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger. _Approval: runs._
 
   ```bash
   arc portfolio holding --symbol AAPL
   ```
 
-- **`arc portfolio trades`** — Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts.
+- **`arc portfolio trades`** — Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts. _Approval: runs._
 
   ```bash
   arc portfolio trades --symbol AAPL
   ```
 
-- **`arc portfolio summary`** — Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class.
+- **`arc portfolio summary`** — Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class. _Approval: runs._
 
   ```bash
   arc portfolio summary
   ```
 
-- **`arc portfolio accounts`** — List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.
+- **`arc portfolio accounts`** — List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value. _Approval: runs._
 
   ```bash
   arc portfolio accounts
@@ -611,55 +631,55 @@ Track investment holdings and trade activity (read-only). Investment data lives 
 
 Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.
 
-- **`arc goals list`** — List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue).
+- **`arc goals list`** — List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue). _Approval: runs._
 
   ```bash
   arc goals list
   ```
 
-- **`arc goals show`** — Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track.
+- **`arc goals show`** — Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track. _Approval: runs._
 
   ```bash
   arc goals show --goal 'Japan trip'
   ```
 
-- **`arc goals create`** — Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too.
+- **`arc goals create`** — Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too. _Approval: asks._
 
   ```bash
   arc goals create --account 'Savings' --target 5000 --deadline 2027-03-01
   ```
 
-- **`arc goals update`** — Change a goal's name, target, deadline, behavior, color, or icon.
+- **`arc goals update`** — Change a goal's name, target, deadline, behavior, color, or icon. _Approval: asks._
 
   ```bash
   arc goals update --goal 'Japan trip' --target 6000
   ```
 
-- **`arc goals contribute`** — Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead.
+- **`arc goals contribute`** — Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead. _Approval: asks._
 
   ```bash
   arc goals contribute --goal 'Japan trip' --amount 250
   ```
 
-- **`arc goals current`** — Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time.
+- **`arc goals current`** — Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time. _Approval: asks._
 
   ```bash
   arc goals current --goal 'Japan trip'
   ```
 
-- **`arc goals archive`** — Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight.
+- **`arc goals archive`** — Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight. _Approval: asks._
 
   ```bash
   arc goals archive --goal 'Japan trip'
   ```
 
-- **`arc goals reopen`** — Un-archive a goal.
+- **`arc goals reopen`** — Un-archive a goal. _Approval: asks._
 
   ```bash
   arc goals reopen --goal 'Japan trip'
   ```
 
-- **`arc goals delete`** — Remove the goal overlay from an account. The account, its balance and its transactions are left untouched. _(advanced)_
+- **`arc goals delete`** — Remove the goal overlay from an account. The account, its balance and its transactions are left untouched. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc goals delete --goal 'Japan trip'
@@ -669,43 +689,43 @@ Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, 
 
 Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
 
-- **`arc splits list`** — List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled.
+- **`arc splits list`** — List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled. _Approval: runs._
 
   ```bash
   arc splits list
   ```
 
-- **`arc splits balances`** — Who owes you what. Totals each person's outstanding and already-settled amounts across every split.
+- **`arc splits balances`** — Who owes you what. Totals each person's outstanding and already-settled amounts across every split. _Approval: runs._
 
   ```bash
   arc splits balances
   ```
 
-- **`arc splits create`** — Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money.
+- **`arc splits create`** — Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money. _Approval: asks._
 
   ```bash
   arc splits create --transaction <id> --people 'Sam,Kim' --mode equal --include-self
   ```
 
-- **`arc splits settle`** — Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income.
+- **`arc splits settle`** — Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income. _Approval: asks._
 
   ```bash
   arc splits settle --gid ab12cd --person Sam
   ```
 
-- **`arc splits reopen`** — Flip a settled share back to open.
+- **`arc splits reopen`** — Flip a settled share back to open. _Approval: asks._
 
   ```bash
   arc splits reopen --gid ab12cd --person Sam
   ```
 
-- **`arc splits remove`** — Drop one person from a split, leaving everyone else in it.
+- **`arc splits remove`** — Drop one person from a split, leaving everyone else in it. _Approval: asks · destructive._
 
   ```bash
   arc splits remove --gid ab12cd --person Sam
   ```
 
-- **`arc splits delete`** — Delete an entire split group across every transaction carrying it. The transactions themselves are untouched. _(advanced)_
+- **`arc splits delete`** — Delete an entire split group across every transaction carrying it. The transactions themselves are untouched. _(advanced)_ _Approval: asks · destructive._
 
   ```bash
   arc splits delete --gid ab12cd
@@ -715,10 +735,26 @@ Share a transaction with other people and track what they owe you. Splits are a 
 
 Server lifecycle. Managed Arc servers scale to zero, so one that has been idle must start before it can answer. Every other command absorbs this automatically; call `wake` when you would rather pay the wait up front.
 
-- **`arc server wake`** — Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one.
+- **`arc server wake`** — Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one. _Approval: runs._
 
   ```bash
   arc server wake
+  ```
+
+## Agent
+
+Agent Controls. On a machine paired with the arc app, every operation is checked against the permissions you set on your phone. These two tools let an agent see those permissions and finish a call that waited for your approval. They are never gated, and no tool can approve or deny anything — that takes your Face ID or Touch ID.
+
+- **`arc agent request-status`** — Finish a call that returned `pending_approval`. Waits up to `wait_seconds` for the user to decide, then runs the exact call they approved, once, and returns its result. Returns `pending_approval` again if they have not decided yet, or an error if they denied it or it expired. _Approval: never asks._
+
+  ```bash
+  arc agent request-status --request-id k57abc --wait-seconds 30
+  ```
+
+- **`arc agent permissions`** — What this agent may do on this machine: for each operation group, whether reads, writes and deletes run, ask the user first, or are refused, plus any time-limited approvals in force. Call it before a batch of changes so you can tell the user what will need their approval. _Approval: never asks._
+
+  ```bash
+  arc agent permissions
   ```
 
 <!-- END:ARC_OPERATIONS_README -->

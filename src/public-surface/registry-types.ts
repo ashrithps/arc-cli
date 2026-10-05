@@ -27,11 +27,21 @@ export type PublicOperationGroup =
   | "portfolio"
   | "goals"
   | "splits"
-  | "server";
+  | "server"
+  | "agent";
 
 export type PublicOperationMode = "read" | "write";
 
 export type PublicOperationExposure = "default" | "advanced";
+
+/**
+ * How much an operation can hurt, for Agent Controls policy. `read` changes
+ * nothing; `destructive` is anything that deletes, closes, merges or applies
+ * a batch — hard to notice and hard to undo. Every `read` mode is `read` risk
+ * and vice versa; the drift guard in `tests/operation-registry.test.ts`
+ * snapshots the destructive set so a reclassification is a deliberate diff.
+ */
+export type PublicOperationRisk = "read" | "write" | "destructive";
 
 export interface PublicOperation {
   /** Stable identifier — `${group}.${subcommand}`. */
@@ -50,6 +60,8 @@ export interface PublicOperation {
   mcpTool: string;
   /** Whether this operation mutates Actual data. */
   mode: PublicOperationMode;
+  /** Agent Controls risk class; drives the preset decision (allow / ask / deny). */
+  risk: PublicOperationRisk;
   /** One-line human description used in MCP + docs. */
   description: string;
   /** Concrete CLI usage examples (rendered into README/SKILL). */

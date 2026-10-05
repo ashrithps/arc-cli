@@ -4,7 +4,11 @@
 # Basic:
 #   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash
 #
-# One-command payload bootstrap:
+# Pair this machine with the arc app (Agent Controls — approvals on your phone):
+#   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- \
+#     --pair <token> --agent claude-code
+#
+# Legacy one-command payload bootstrap (no approvals; kept for one release):
 #   curl -fsSL https://raw.githubusercontent.com/ashrithps/arc-cli/main/install.sh | bash -s -- \
 #     --payload '<json-payload>'
 #
@@ -24,6 +28,9 @@ REPO_TARBALL_URL="${ARC_CLI_TARBALL_URL:-https://codeload.github.com/ashrithps/a
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 PAYLOAD=""
+PAIR_TOKEN=""
+PAIR_AGENT=""
+PAIR_LABEL=""
 SKILLS_ONLY=0
 SKILL_FILE_OVERRIDE=""
 
@@ -31,6 +38,18 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --payload)
       PAYLOAD="${2:-}"
+      shift 2
+      ;;
+    --pair)
+      PAIR_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --agent)
+      PAIR_AGENT="${2:-}"
+      shift 2
+      ;;
+    --label)
+      PAIR_LABEL="${2:-}"
       shift 2
       ;;
     --skills-only)
@@ -995,6 +1014,70 @@ install_agent_skills
 section "Claude Desktop MCP"
 merge_claude_desktop_mcp "${BIN_DIR}/arc"
 
+# --- arc-approver helper ---
+# Touch ID approvals for Agent Controls (native/arc-approver). macOS only and
+# strictly optional: any failure here skips the helper and approvals go to the
+# phone instead. It never fails the install.
+# TODO(release): set these to the published universal binary and its sha256
+# (printed by native/arc-approver/build.sh) once a release ships one.
+ARC_APPROVER_URL="${ARC_APPROVER_URL:-}"
+ARC_APPROVER_SHA256="${ARC_APPROVER_SHA256:-}"
+
+install_arc_approver() {
+  local dest="${ARC_HOME}/bin/arc-approver"
+  local tmp="${WORK_DIR}/arc-approver"
+  local src="${APP_DIR}/native/arc-approver/build.sh"
+  mkdir -p "${ARC_HOME}/bin" || return 1
+  if [[ -n "${ARC_APPROVER_URL}" && -n "${ARC_APPROVER_SHA256}" ]]; then
+    curl -fsSL "${ARC_APPROVER_URL}" -o "${tmp}" 2>/dev/null || return 1
+    local got
+    got="$(shasum -a 256 "${tmp}" | awk '{print $1}')" || return 1
+    if [[ "${got}" != "${ARC_APPROVER_SHA256}" ]]; then
+      warn "arc-approver download failed its checksum; skipped"
+      return 1
+    fi
+  # xcode-select first: a bare `xcrun` with no developer tools opens a GUI
+  # "install command line tools" dialog in the middle of the install.
+  elif [[ -f "${src}" ]] && xcode-select -p >/dev/null 2>&1 && xcrun --find swiftc >/dev/null 2>&1; then
+    info "building arc-approver with swiftc"
+    bash "${src}" "${tmp}" >/dev/null 2>&1 || return 1
+  else
+    return 1
+  fi
+  [[ -s "${tmp}" ]] || return 1
+  chmod 755 "${tmp}" && mv -f "${tmp}" "${dest}" || return 1
+  "${dest}" version >/dev/null 2>&1 || { rm -f "${dest}"; return 1; }
+  ok "Touch ID approver at ${dest}"
+}
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  section "Touch ID approvals"
+  install_arc_approver || info "skipped (approvals will go to your phone)"
+fi
+# --- end arc-approver helper ---
+
+if [[ -n "${PAIR_TOKEN}" && -n "${PAYLOAD}" ]]; then
+  fail "use --pair or --payload, not both"
+  exit 1
+fi
+
+if [[ -n "${PAIR_TOKEN}" ]]; then
+  # Interactive on purpose: the user compares the four words printed here
+  # with the ones on their phone, then approves with Face ID. The budget
+  # credentials arrive sealed to this machine's key; nothing secret is in
+  # this command line.
+  section "Pairing with the arc app"
+  pair_args=(auth pair "${PAIR_TOKEN}")
+  [[ -n "${PAIR_AGENT}" ]] && pair_args+=(--agent "${PAIR_AGENT}")
+  [[ -n "${PAIR_LABEL}" ]] && pair_args+=(--label "${PAIR_LABEL}")
+  if "${BIN_DIR}/arc" "${pair_args[@]}"; then
+    ok "paired — agents now ask on your phone before changing anything"
+  else
+    fail "pairing did not finish. Start again from the arc app, or run: arc auth pair <token>"
+    exit 1
+  fi
+fi
+
 if [[ -n "${PAYLOAD}" ]]; then
   section "Bootstrapping budget"
   if "${BIN_DIR}/arc" auth bootstrap --payload "${PAYLOAD}" >/tmp/arc-bootstrap.log 2>&1; then
@@ -1015,6 +1098,7 @@ printf "  %sSkill%s     %s\n" "${DIM}" "${RESET}" "${HOME}/.config/arc/SKILL.md"
 printf "  %sMCP%s       %s\n" "${DIM}" "${RESET}" "${CLAUDE_CONFIG_PATH}"
 printf "\n"
 printf "  %sTry:%s\n" "${BOLD}" "${RESET}"
+printf "    arc auth status\n"
 printf "    arc config show --json\n"
 printf "    arc budgets list --json\n"
 printf "    arc ui\n"

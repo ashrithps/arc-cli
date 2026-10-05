@@ -43,6 +43,16 @@ Before running any of these, clearly state what will happen (e.g. "This will del
 
 Read-only operations (`arc query …`, `arc accounts list`, `arc transactions list`, etc.) do not require confirmation.
 
+## Approvals (Agent Controls)
+
+On a machine paired with the arc app, every operation is checked against the permissions the user set on their phone, and many changes need their approval there (Face ID) before they run. This is separate from the confirmation above: confirm with the user first, then expect the approval.
+
+- **`pending_approval` is not an error.** A tool that needs approval waits up to 45 seconds. If the user has not decided by then it returns `{"status": "pending_approval", "request_id": "…"}`. Tell the user the request is waiting on their phone, then call `arc_agent_request_status` with that `request_id`. It waits up to 50 more seconds, runs the approved call **exactly once**, and returns its result. Do not repeat the original call while it is pending; that only creates a duplicate request.
+- **A denial is final.** A denied call returns an error with `"status": "denied"`. Tell the user, and do not try another tool, a batch, or the CLI to get the same effect.
+- **Check before a batch of changes.** `arc_agent_permissions` lists what runs, what asks, and what is refused for you right now, so you can tell the user up front what will need their approval.
+- **From the shell**, a command that needs approval waits; without a terminal it exits **75** with JSON naming the request. Finish it with `arc approvals wait <request_id>`. A denial exits **77**.
+- You cannot approve anything yourself. There is no tool for it: approving takes the user's Face ID or Touch ID.
+
 ## Answering Common Questions (read this first)
 
 Most real user questions are answered by **transaction-based queries**, not by the **budgets** commands. The `budgets *` commands describe the user's planned budget (envelopes, carryover, set amounts) and are only meaningful when the user has actively budgeted amounts for the period. If the user asks "how much did I spend", "what was my total", "give me a breakdown", assume the answer lives in `query` or `transactions`, not `budgets`.
@@ -198,7 +208,8 @@ its direction.
 
 ## Installed Runtime
 
-- Installed config: `~/.arc-cli/config.json`
+- Installed config: `~/.arc-cli/config.json` (on a paired machine it holds no secrets: those live in the Keychain / Secret Service, service `arc-cli`)
+- Agent activity journal: `~/.arc-cli/activity.jsonl` (this machine only)
 - Installed app snapshot: `~/.arc-cli/app`
 - Launcher: `~/.local/bin/arc`
 - `arc config show --json` prints the installed config summary with secrets redacted.
@@ -339,6 +350,10 @@ Arc's data-operation surface is exposed identically through the CLI and through 
 
 Each entry is tagged with its mode (`read` or `write`) and exposure tier. Tools tagged `(advanced)` are batch, destructive, or global-state operations; treat them as opt-in and double-check inputs before calling.
 
+**Approvals.** On a machine paired with the arc app (`arc auth pair`), each operation is checked against the permissions you set on your phone. Under the default **Standard** preset, reads run and every change asks first: the agent waits while your phone shows the request, and it runs once you approve with Face ID. Each entry below is tagged with what it does under Standard. Unpaired installs run everything and keep a local log only.
+
+When a call needs approval, the tool waits up to 45 seconds. If the user has not decided by then it returns `{"status": "pending_approval", "request_id": …}` — not an error. Tell the user it is waiting on their phone, then call `arc_agent_request_status` with that `request_id`; it runs the approved call exactly once and returns its result. A denied call returns an error: do not retry it or look for another tool that does the same thing.
+
 ## Accounts
 
 Manage on- and off-budget accounts and balances.
@@ -346,6 +361,7 @@ Manage on- and off-budget accounts and balances.
 ### `arc accounts list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_accounts_list`
 - List all accounts in the active budget with balances and on/off-budget status.
 
@@ -357,6 +373,7 @@ arc accounts list --json
 ### `arc accounts balance`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_accounts_balance`
 - Show the current balance of a single account.
 
@@ -367,6 +384,7 @@ arc accounts balance --account 'HDFC Checking'
 ### `arc accounts create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_accounts_create`
 - Create a new account, optionally off-budget and with a starting balance.
 
@@ -378,6 +396,7 @@ arc accounts create --name 'Cash' --balance 200
 ### `arc accounts update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_accounts_update`
 - Update an account's name, type, or on/off-budget flag.
 
@@ -388,6 +407,7 @@ arc accounts update --id 'Cash' --name 'Wallet'
 ### `arc accounts close`
 
 - mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_accounts_close`
 - Close an account, optionally transferring its remaining balance to another account.
 
@@ -398,6 +418,7 @@ arc accounts close --id 'Old Card' --transfer-to 'New Card'
 ### `arc accounts reopen`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_accounts_reopen`
 - Reopen a previously closed account.
 
@@ -408,6 +429,7 @@ arc accounts reopen --id 'Old Card'
 ### `arc accounts delete`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_accounts_delete`
 - Permanently delete an account. Destructive — prefer close in most cases.
 
@@ -422,6 +444,7 @@ Create, update, split, transfer, and batch-process transactions.
 ### `arc transactions list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_transactions_list`
 - List transactions for an account, optionally filtered by date range. Pass `--tag` to search across ALL accounts by tag (`--account` becomes optional and narrows results when set).
 
@@ -435,6 +458,7 @@ arc transactions list --tag 'Quantini,Shrine Global' --start 2026-04-01
 ### `arc transactions add`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_add`
 - Add a single transaction to an account. Generates a deterministic imported_id when omitted.
 
@@ -446,6 +470,7 @@ arc transactions add --account 'Card' --date 2026-04-10 --amount -25.50 --payee 
 ### `arc transactions import`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_import`
 - Bulk-import transactions into an account from a JSON array, with automatic de-duplication.
 
@@ -456,6 +481,7 @@ arc transactions import --account 'Card' '[{"date":"2026-04-01","amount":-1234,"
 ### `arc transactions update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_update`
 - Update fields on an existing transaction by id. Use `--add-tag` / `--remove-tag` to mutate `#tag` tokens in notes without rewriting the prose.
 
@@ -468,6 +494,7 @@ arc transactions update --id <txn-id> --remove-tag 'OldTag,Stale'
 ### `arc transactions delete`
 
 - mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_transactions_delete`
 - Delete a transaction by id.
 
@@ -478,6 +505,7 @@ arc transactions delete --id <txn-id>
 ### `arc transactions split`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_split`
 - Create a split transaction with one or more child sub-transactions.
 
@@ -488,6 +516,7 @@ arc transactions split --account 'Card' --date 2026-04-01 --payee 'Costco' --sub
 ### `arc transactions transfer`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_transfer`
 - Create a linked transfer between two accounts.
 
@@ -498,6 +527,7 @@ arc transactions transfer --from 'Checking' --to 'Savings' --amount 500 --date 2
 ### `arc transactions refund`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_refund`
 - Mark a transaction refunded: zeroes its amount and records the original in a `#refund` note token, so the row stays visible instead of being deleted. Refuses transfers, splits and reconciled rows.
 
@@ -508,6 +538,7 @@ arc transactions refund --id <transaction-id>
 ### `arc transactions unrefund`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_transactions_unrefund`
 - Undo a refund, restoring the original amount, its direction (expense or income), and the note.
 
@@ -518,6 +549,7 @@ arc transactions unrefund --id <transaction-id>
 ### `arc transactions refunds`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_transactions_refunds`
 - List refunded transactions with the original amount recovered from the refund token, and when each was marked.
 
@@ -529,6 +561,7 @@ arc transactions refunds --start 2026-01-01 --json
 ### `arc transactions batch-update`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_transactions_batch_update`
 - Apply field updates to many transactions in one call. Accepts a JSON array of {id, ...fields}.
 
@@ -539,6 +572,7 @@ arc transactions batch-update '[{"id":"...","category":"Dining"},{"id":"...","no
 ### `arc transactions batch-add`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_transactions_batch_add`
 - Bulk-add transactions to an account, resolving category names and generating imported_ids.
 
@@ -549,6 +583,7 @@ arc transactions batch-add --account 'Card' '[{"date":"2026-04-01","amount":-12.
 ### `arc transactions batch-categorize`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_transactions_batch_categorize`
 - Categorize all uncategorized transactions in an account whose payee matches a substring pattern.
 
@@ -563,6 +598,7 @@ Manage category groups and individual categories.
 ### `arc categories list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_categories_list`
 - List all category groups and their categories.
 
@@ -574,6 +610,7 @@ arc categories list --json
 ### `arc categories create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_categories_create`
 - Create a new category inside an existing category group.
 
@@ -584,6 +621,7 @@ arc categories create --name 'Coffee' --group 'Food'
 ### `arc categories update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_categories_update`
 - Rename a category, move it to a different group, or toggle hidden.
 
@@ -594,6 +632,7 @@ arc categories update --id 'Coffee' --group 'Dining'
 ### `arc categories delete`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_categories_delete`
 - Delete a category, optionally transferring its transactions and budget to another category.
 
@@ -608,6 +647,7 @@ Manage payees, merge duplicates, and look up usage.
 ### `arc payees list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_payees_list`
 - List all payees. Pass --all to include hidden / system payees.
 
@@ -619,6 +659,7 @@ arc payees list --all
 ### `arc payees create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_payees_create`
 - Create a new payee by name.
 
@@ -629,6 +670,7 @@ arc payees create --name 'Local Bakery'
 ### `arc payees update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_payees_update`
 - Rename an existing payee.
 
@@ -639,6 +681,7 @@ arc payees update --id 'Bakery' --name 'Local Bakery'
 ### `arc payees find-or-create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_payees_find_or_create`
 - Look up a payee by name and create it if missing. Returns the payee id.
 
@@ -649,6 +692,7 @@ arc payees find-or-create --name 'Local Bakery'
 ### `arc payees common`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_payees_common`
 - List the most frequently used payees, ordered by transaction count.
 
@@ -659,6 +703,7 @@ arc payees common --limit 10
 ### `arc payees delete`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_payees_delete`
 - Delete a payee. Linked transactions become payee-less.
 
@@ -669,6 +714,7 @@ arc payees delete --id 'Old Vendor'
 ### `arc payees merge`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_payees_merge`
 - Merge one or more payees into a target payee. Comma-separated source list.
 
@@ -683,6 +729,7 @@ Manage Actual Budget tags (color, description) and apply / unapply them on trans
 ### `arc tags list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_tags_list`
 - List all tags with their colors and optional descriptions.
 
@@ -694,6 +741,7 @@ arc tags list --json
 ### `arc tags add`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_tags_add`
 - Create a new tag. The leading `#` is optional and stripped if present.
 
@@ -705,6 +753,7 @@ arc tags add --name 'Shrine Global' --color '#A855F7' --description 'Company exp
 ### `arc tags update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_tags_update`
 - Rename a tag, change its color, or update its description. `--id` accepts the tag name or its UUID.
 
@@ -716,6 +765,7 @@ arc tags update --id Quantini --name QuantiniLabs
 ### `arc tags apply`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_tags_apply`
 - Append one or more tags to a transaction's notes. Comma-separated for multi-tag. Idempotent.
 
@@ -727,6 +777,7 @@ arc tags apply --transaction <tx-id> --tag 'Quantini,Shrine Global'
 ### `arc tags unapply`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_tags_unapply`
 - Remove one or more `#tag` tokens from a transaction's notes.
 
@@ -737,6 +788,7 @@ arc tags unapply --transaction <tx-id> --tag Quantini
 ### `arc tags delete`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_tags_delete`
 - Soft-delete a tag from the tag library. Existing transactions retain the `#tag` text in their notes — you must remove those separately.
 
@@ -751,6 +803,7 @@ Define and maintain auto-categorization and payee-cleanup rules.
 ### `arc rules list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_rules_list`
 - List all transaction rules in the active budget.
 
@@ -762,6 +815,7 @@ arc rules list --json
 ### `arc rules create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_rules_create`
 - Create a rule from a JSON payload. Account/category/payee names in conditions and actions are auto-resolved to ids.
 
@@ -772,6 +826,7 @@ arc rules create '{"stage":"pre","conditionsOp":"and","conditions":[{"field":"pa
 ### `arc rules update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_rules_update`
 - Update an existing rule. The JSON payload must include the rule id.
 
@@ -782,6 +837,7 @@ arc rules update '{"id":"...","actions":[...]}'
 ### `arc rules delete`
 
 - mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_rules_delete`
 - Delete a rule by id.
 
@@ -796,6 +852,7 @@ Manage recurring schedules and post them as transactions.
 ### `arc schedules list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_schedules_list`
 - List all recurring schedules.
 
@@ -806,6 +863,7 @@ arc schedules list
 ### `arc schedules create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_schedules_create`
 - Create a recurring schedule from a JSON payload. Account/category/payee names are auto-resolved.
 
@@ -816,6 +874,7 @@ arc schedules create '{"name":"Rent","account":"Checking","payee":"Landlord","am
 ### `arc schedules update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_schedules_update`
 - Update an existing schedule by id with a JSON payload of fields to change.
 
@@ -826,6 +885,7 @@ arc schedules update --id <sched-id> '{"amount":-160000}'
 ### `arc schedules delete`
 
 - mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_schedules_delete`
 - Delete a schedule by id.
 
@@ -836,6 +896,7 @@ arc schedules delete --id <sched-id>
 ### `arc schedules post`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_schedules_post`
 - Materialize a schedule as a real transaction on the given date (defaults to next due date).
 
@@ -847,6 +908,7 @@ arc schedules post --id <sched-id> --date 2026-05-01
 ### `arc schedules upcoming`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_schedules_upcoming`
 - List schedules sorted by next due date.
 
@@ -857,6 +919,7 @@ arc schedules upcoming
 ### `arc schedules complete`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_schedules_complete`
 - Mark a schedule as completed so it stops generating new occurrences.
 
@@ -871,6 +934,7 @@ Inspect budget months, set budgeted amounts, and switch between budgets.
 ### `arc budgets list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_budgets_list`
 - List budget files available on the configured Actual server.
 
@@ -882,6 +946,7 @@ arc budgets list --json
 ### `arc budgets months`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_budgets_months`
 - List the budget months Actual has data for.
 
@@ -892,6 +957,7 @@ arc budgets months
 ### `arc budgets month` (alias: `show`)
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_budgets_month`
 - Show the full budget for a single month (categories, budgeted, spent, balance).
 
@@ -903,6 +969,7 @@ arc budgets show --month 2026-04
 ### `arc budgets set-amount`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_budgets_set_amount`
 - Set the budgeted amount for a category in a given month.
 
@@ -913,6 +980,7 @@ arc budgets set-amount --month 2026-04 --category 'Groceries' --amount 600
 ### `arc budgets set-carryover`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_budgets_set_carryover`
 - Enable or disable budget carryover (rollover) for a category in a given month.
 
@@ -923,6 +991,7 @@ arc budgets set-carryover --month 2026-04 --category 'Travel' --enabled true
 ### `arc budgets transfer`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_budgets_transfer`
 - Move budgeted money between two categories within the same month.
 
@@ -933,6 +1002,7 @@ arc budgets transfer --month 2026-04 --from 'Dining' --to 'Groceries' --amount 5
 ### `arc budgets income`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_budgets_income`
 - Show income categories with budgeted vs received totals for a month.
 
@@ -943,6 +1013,7 @@ arc budgets income --month 2026-04
 ### `arc budgets summary` (alias: `totals`)
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_budgets_summary`
 - Top-line totals for a month: total budgeted, spent, balance, and to-budget.
 
@@ -954,6 +1025,7 @@ arc budgets totals --month 2026-04
 ### `arc budgets switch`
 
 - mode: **write** (advanced)
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_budgets_switch`
 - Switch the active budget file for subsequent commands. Persists the selection in the credential store.
 
@@ -968,6 +1040,7 @@ Read-only reports and ad-hoc Actual queries.
 ### `arc query spending`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_spending`
 - Spending summary for a month broken down by category.
 
@@ -978,6 +1051,7 @@ arc query spending --month 2026-04
 ### `arc query accounts` (alias: `summary`)
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_accounts`
 - Account summary report with balances and on/off-budget grouping.
 
@@ -989,6 +1063,7 @@ arc query summary
 ### `arc query uncategorized`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_uncategorized`
 - List uncategorized transactions, optionally scoped to one account.
 
@@ -1000,6 +1075,7 @@ arc query uncategorized --account 'Card'
 ### `arc query payee`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_payee`
 - Recent transactions for a single payee across all accounts.
 
@@ -1010,6 +1086,7 @@ arc query payee --name 'Amazon' --limit 50
 ### `arc query category`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_category`
 - Transactions in a single category, optionally filtered by date range.
 
@@ -1020,6 +1097,7 @@ arc query category --name 'Groceries' --start 2026-01-01 --end 2026-03-31
 ### `arc query trends`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_trends`
 - Per-category spending trend over the last N months.
 
@@ -1030,6 +1108,7 @@ arc query trends --months 6
 ### `arc query top` (alias: `top-categories`)
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_top`
 - Top spending categories for a month, ranked by amount spent.
 
@@ -1040,6 +1119,7 @@ arc query top --month 2026-04 --limit 10
 ### `arc query monthly` (alias: `monthly-totals`)
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_monthly`
 - Income, expenses, and net totals per month for the last N months.
 
@@ -1051,6 +1131,7 @@ arc query monthly-totals --months 6
 ### `arc query balance-history`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_balance_history`
 - Daily running balance for an account over the last N months.
 
@@ -1061,6 +1142,7 @@ arc query balance-history --account 'Checking' --months 6
 ### `arc query monthly-balances`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_monthly_balances`
 - End-of-month balance series for an account over the last N months.
 
@@ -1071,6 +1153,7 @@ arc query monthly-balances --account 'Checking' --months 12
 ### `arc query custom`
 
 - mode: **read** (advanced)
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_query_custom`
 - Run a raw Actual query (ActualQL JSON). Advanced — for power users only.
 
@@ -1085,6 +1168,7 @@ Track investment holdings and trade activity (read-only). Investment data lives 
 ### `arc portfolio list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_portfolio_list`
 - List holdings across all detailed investment accounts (symbol, asset class, quantity, price, value, unrealized P/L %).
 
@@ -1096,6 +1180,7 @@ arc portfolio list --account 'IBKR' --json
 ### `arc portfolio holding`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_portfolio_holding`
 - Detail for one holding — quantity, price, average cost, market value, unrealized P/L, allocation %, plus its trade ledger.
 
@@ -1107,6 +1192,7 @@ arc portfolio holding --symbol SOL --account 'Crypto'
 ### `arc portfolio trades`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_portfolio_trades`
 - Trade / activity ledger (buys, sells, fees, dividends, …) across investment accounts and their paired cash accounts.
 
@@ -1118,6 +1204,7 @@ arc portfolio trades --kind dividend --start 2026-01-01 --json
 ### `arc portfolio summary`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_portfolio_summary`
 - Portfolio totals — total market value, total unrealized P/L, and allocation by account and by asset class.
 
@@ -1129,6 +1216,7 @@ arc portfolio summary --json
 ### `arc portfolio accounts`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_portfolio_accounts`
 - List investment accounts with their kind (stock/crypto), tracking mode (simple/detailed), data source, and value.
 
@@ -1144,6 +1232,7 @@ Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, 
 ### `arc goals list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_goals_list`
 - List savings goals with funded amount, target, percent complete, and status (on_track / behind / ahead / completed / overdue).
 
@@ -1155,6 +1244,7 @@ arc goals list --archived --json
 ### `arc goals show`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_goals_show`
 - Full progress for one goal: funded, remaining, days and months left, and the monthly amount needed to stay on track.
 
@@ -1166,6 +1256,7 @@ arc goals show --goal 'Japan trip' --json
 ### `arc goals create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_goals_create`
 - Turn an existing account into a savings goal. Writes a `#goal:` tag onto the account note, so the goal shows up in the arc app too.
 
@@ -1177,6 +1268,7 @@ arc goals create --account 'Savings' --name 'Japan trip' --target 5000 --behavio
 ### `arc goals update`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_goals_update`
 - Change a goal's name, target, deadline, behavior, color, or icon.
 
@@ -1188,6 +1280,7 @@ arc goals update --goal 'Japan trip' --deadline 2027-06-01
 ### `arc goals contribute`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_goals_contribute`
 - Record a contribution against a set-aside goal. Rejected for have-balance goals, which measure the account balance directly — add a transaction to the account instead.
 
@@ -1198,6 +1291,7 @@ arc goals contribute --goal 'Japan trip' --amount 250
 ### `arc goals current`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_goals_current`
 - Spotlight one goal as the current goal, or clear the spotlight. At most one goal is current at a time.
 
@@ -1209,6 +1303,7 @@ arc goals current --clear
 ### `arc goals archive`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_goals_archive`
 - Archive a goal. It stops appearing in `goals list` but keeps its data, and loses the current-goal spotlight.
 
@@ -1219,6 +1314,7 @@ arc goals archive --goal 'Japan trip'
 ### `arc goals reopen`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_goals_reopen`
 - Un-archive a goal.
 
@@ -1229,6 +1325,7 @@ arc goals reopen --goal 'Japan trip'
 ### `arc goals delete`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_goals_delete`
 - Remove the goal overlay from an account. The account, its balance and its transactions are left untouched.
 
@@ -1243,6 +1340,7 @@ Share a transaction with other people and track what they owe you. Splits are a 
 ### `arc splits list`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_splits_list`
 - List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled.
 
@@ -1254,6 +1352,7 @@ arc splits list --person Sam --open --json
 ### `arc splits balances`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_splits_balances`
 - Who owes you what. Totals each person's outstanding and already-settled amounts across every split.
 
@@ -1265,6 +1364,7 @@ arc splits balances --json
 ### `arc splits create`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_splits_create`
 - Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money.
 
@@ -1276,6 +1376,7 @@ arc splits create --transaction <id> --people 'Sam,Kim' --mode percent --values 
 ### `arc splits settle`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_splits_settle`
 - Mark one person's share as paid, optionally linking the repayment transaction so analytics can exclude it from income.
 
@@ -1287,6 +1388,7 @@ arc splits settle --gid ab12cd --person Sam --transaction <repayment-id>
 ### `arc splits reopen`
 
 - mode: **write**
+- risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_splits_reopen`
 - Flip a settled share back to open.
 
@@ -1297,6 +1399,7 @@ arc splits reopen --gid ab12cd --person Sam
 ### `arc splits remove`
 
 - mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_splits_remove`
 - Drop one person from a split, leaving everyone else in it.
 
@@ -1307,6 +1410,7 @@ arc splits remove --gid ab12cd --person Sam
 ### `arc splits delete`
 
 - mode: **write** (advanced)
+- risk: **destructive** · approval under Standard: **asks · destructive**
 - mcp tool: `arc_splits_delete`
 - Delete an entire split group across every transaction carrying it. The transactions themselves are untouched.
 
@@ -1321,12 +1425,40 @@ Server lifecycle. Managed Arc servers scale to zero, so one that has been idle m
 ### `arc server wake`
 
 - mode: **read**
+- risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_server_wake`
 - Start a sleeping server and wait until it answers. Managed Arc servers scale to zero, so the first call after an idle period pays a cold start. Every other tool absorbs this automatically — call this first when you would rather pay the wait in one cheap request than risk it landing on a slow one.
 
 ```bash
 arc server wake
 arc server wake --timeout 120 --json
+```
+
+## Agent
+
+Agent Controls. On a machine paired with the arc app, every operation is checked against the permissions you set on your phone. These two tools let an agent see those permissions and finish a call that waited for your approval. They are never gated, and no tool can approve or deny anything — that takes your Face ID or Touch ID.
+
+### `arc agent request-status`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **never asks**
+- mcp tool: `arc_agent_request_status`
+- Finish a call that returned `pending_approval`. Waits up to `wait_seconds` for the user to decide, then runs the exact call they approved, once, and returns its result. Returns `pending_approval` again if they have not decided yet, or an error if they denied it or it expired.
+
+```bash
+arc agent request-status --request-id k57abc --wait-seconds 30
+```
+
+### `arc agent permissions`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **never asks**
+- mcp tool: `arc_agent_permissions`
+- What this agent may do on this machine: for each operation group, whether reads, writes and deletes run, ask the user first, or are refused, plus any time-limited approvals in force. Call it before a batch of changes so you can tell the user what will need their approval.
+
+```bash
+arc agent permissions
+arc agent permissions --json
 ```
 
 ## MCP Parity

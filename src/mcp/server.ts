@@ -55,6 +55,18 @@ import * as portfolioOps from '../operations/portfolio.js';
 import * as goalOps from '../operations/goals.js';
 import * as splitOps from '../operations/splits.js';
 import * as serverOps from '../operations/server.js';
+import { loadRuntimeConfig } from '../config-store.js';
+import { resolveClient, type ClientIdentity } from '../agent-controls/client-identity.js';
+import { operationById } from '../agent-controls/cli-operation.js';
+import {
+  AgentDeniedError,
+  createGateRuntime,
+  pendingApprovalPayload,
+  resumePending,
+  runGated,
+  type GateRuntime,
+} from '../agent-controls/gate.js';
+import { describePermissions } from '../agent-controls/permissions.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,7 +74,25 @@ import * as serverOps from '../operations/server.js';
 export interface McpHandlerDeps {
   client: ActualClient;
   writer: SafeWriter;
+  /**
+   * Set only for the `agent` group, whose handlers talk to Agent Controls
+   * rather than Actual. `client`/`writer` are not connected for them; a
+   * handler that needs Actual (request_status running an approved call)
+   * resolves it through `resolve`.
+   */
+  agent?: AgentToolContext;
 }
+
+export interface AgentToolContext {
+  identity: ClientIdentity;
+  runtime: GateRuntime;
+  budget: () => string;
+  resolve: () => Promise<{ deps: McpHandlerDeps; cleanup: () => Promise<void> }>;
+}
+
+/** How long an MCP call waits for the user before returning `pending_approval` (contract §8). */
+export const MCP_APPROVAL_WAIT_MS = 45_000;
+const REQUEST_STATUS_MAX_WAIT_S = 50;
 
 /** An operation handler receives deps + validated MCP input and returns JSON-safe data. */
 export type McpOperationHandler = (
@@ -642,6 +672,41 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
     if (account) accountId = await accountOps.resolveAccountId(client, account);
     return transactionOps.listRefunds(client, { account: accountId, start, end });
   },
+
+  // agent controls ───────────────────────────────────────────────────────────
+  arc_agent_permissions: async ({ agent }) => {
+    if (!agent) throw new Error('arc_agent_permissions needs the agent context.');
+    return describePermissions(agent.identity, agent.runtime);
+  },
+  arc_agent_request_status: async ({ agent }, { request_id, wait_seconds }) => {
+    if (!agent) throw new Error('arc_agent_request_status needs the agent context.');
+    const waitSeconds = Math.min(
+      REQUEST_STATUS_MAX_WAIT_S,
+      Math.max(0, typeof wait_seconds === 'number' ? wait_seconds : 30)
+    );
+    const outcome = await resumePending({
+      requestId: String(request_id),
+      surface: 'mcp',
+      runtime: agent.runtime,
+      wait: { maxMs: waitSeconds * 1000 },
+      exec: async (call) => {
+        // The approval covers one budget; a budget switch since then must not redirect it.
+        if (call.budget !== agent.budget()) {
+          throw new Error('The active budget changed since this call was approved. Switch back and call again.');
+        }
+        const op = operationById(call.opId);
+        const handler = op ? OPERATION_HANDLERS[op.mcpTool] : undefined;
+        if (!op || !handler || op.group === 'agent') throw new Error(`Unknown operation ${call.opId}`);
+        const { deps, cleanup } = await agent.resolve();
+        try {
+          return await handler(deps, call.args);
+        } finally {
+          await cleanup();
+        }
+      },
+    });
+    return outcome.status === 'pending' ? pendingApprovalPayload(outcome) : outcome.result;
+  },
 };
 
 // ── Introspection ───────────────────────────────────────────────────────────
@@ -737,6 +802,12 @@ export interface CreateMcpServerOptions {
     deps: McpHandlerDeps;
     cleanup: () => Promise<void>;
   }>;
+  /** Agent Controls runtime per call; tests inject a fake API. Defaults to this machine's pairing. */
+  gateRuntime?: () => GateRuntime;
+  /** `arc mcp --http`: a bare "claude" client is Claude.ai, and an unnamed one is "remote". */
+  remote?: boolean;
+  /** `arc mcp --agent <key>`: tag every call with this client. */
+  agentFlag?: string;
 }
 
 /**
@@ -837,7 +908,17 @@ Arc only talks to Actual Budget. There is no other backend, database,
 or storage layer — do not mention Convex, Postgres, or anything else.
 Advanced tools (delete, merge, batch_*, custom query, budgets_switch)
 mutate state irreversibly; prefer safer tools and double-check inputs
-before calling them.`;
+before calling them.
+
+APPROVALS
+The user may require approval on their phone before a tool runs. Call
+arc_agent_permissions to see what will ask. When a call returns
+{"status": "pending_approval", "request_id": ...} it is NOT an error: tell
+the user it is waiting for them, then call arc_agent_request_status with
+that request_id. It runs the approved call exactly once and returns its
+result. Never repeat the original call while it is pending. A denied call
+returns an error with status "denied": accept it, and do not try another
+tool to get the same effect.`;
 
 /** Build an MCP server whose tools are driven by the public operation registry. */
 export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer {
@@ -847,6 +928,8 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
   );
 
   const { client: injectedClient, writer: injectedWriter, resolveDeps } = options;
+  const gateRuntime = options.gateRuntime ?? (() => createGateRuntime());
+  const currentBudget = budgetResolver(options);
 
   const resolve = async (): Promise<{
     deps: McpHandlerDeps;
@@ -877,18 +960,74 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): McpServer
         inputSchema: op.inputSchema,
       },
       async (input: Record<string, any>) => {
-        const { deps, cleanup } = await resolve();
+        const args = input ?? {};
+        const runtime = gateRuntime();
+        const identity = resolveClient(server.server.getClientVersion()?.name, {
+          remote: options.remote,
+          agentFlag: options.agentFlag,
+        });
+        const exec = async () => {
+          const { deps, cleanup } = await resolve();
+          try {
+            return await handler(deps, args);
+          } finally {
+            await cleanup();
+          }
+        };
+
         try {
-          const result = await handler(deps, input ?? {});
-          return { content: [{ type: 'text', text: jsonText(result) }] };
-        } finally {
-          await cleanup();
+          if (op.group === 'agent') {
+            const agentDeps = {
+              agent: { identity, runtime, budget: currentBudget, resolve },
+            } as McpHandlerDeps;
+            return { content: [{ type: 'text' as const, text: jsonText(await handler(agentDeps, args)) }] };
+          }
+
+          // The choke point: nothing below runs until Agent Controls says so.
+          const outcome = await runGated({
+            op,
+            args,
+            surface: 'mcp',
+            client: identity,
+            budget: currentBudget(),
+            exec,
+            wait: { maxMs: MCP_APPROVAL_WAIT_MS },
+            runtime,
+          });
+          const payload = outcome.status === 'pending' ? pendingApprovalPayload(outcome) : outcome.result;
+          return { content: [{ type: 'text' as const, text: jsonText(payload) }] };
+        } catch (error) {
+          if (!(error instanceof AgentDeniedError)) throw error;
+          return {
+            isError: true,
+            content: [{
+              type: 'text' as const,
+              text: jsonText({ status: 'denied', reason: error.kind, message: error.message }),
+            }],
+          };
         }
       }
     );
   }
 
   return server;
+}
+
+/**
+ * The budget an MCP call would run against, for its opHash. Read without
+ * connecting: a call the gate refuses should not pay for an Actual session.
+ */
+function budgetResolver(options: CreateMcpServerOptions): () => string {
+  return () => {
+    const injected = options.client as unknown as { getConfig?: () => { budgetSyncId?: string } } | undefined;
+    if (injected?.getConfig) return injected.getConfig().budgetSyncId ?? '';
+    if (cachedDeps) return cachedDeps.client.getConfig().budgetSyncId ?? '';
+    try {
+      return loadRuntimeConfig().defaultSyncId ?? '';
+    } catch {
+      return '';
+    }
+  };
 }
 
 /**
@@ -1029,8 +1168,8 @@ async function withRealClient(): Promise<{
 
 // ── Production entry points ─────────────────────────────────────────────────
 
-export async function startMcpServer(): Promise<void> {
-  const server = createMcpServer();
+export async function startMcpServer(options: { agent?: string } = {}): Promise<void> {
+  const server = createMcpServer({ agentFlag: options.agent });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -1053,6 +1192,8 @@ export interface HttpMcpServerOptions {
   token?: string;
   /** Optional fixed mount path. Default "/mcp". */
   path?: string;
+  /** Agent Controls client key for every call (`--agent`). Default "remote". */
+  agent?: string;
 }
 
 /**
@@ -1142,7 +1283,7 @@ export async function startHttpMcpServer(opts: HttpMcpServerOptions = {}): Promi
     // level cache inside withRealClient(), so the per-request overhead
     // is just the in-memory MCP plumbing.
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    const server = createMcpServer();
+    const server = createMcpServer({ remote: true, agentFlag: opts.agent });
 
     res.setHeader('Access-Control-Allow-Origin', '*');
 
