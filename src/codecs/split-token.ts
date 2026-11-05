@@ -239,7 +239,18 @@ export function stripSplitTokensForDisplay(notes: string | null | undefined): st
  * amount the analytics layer subtracts from a `#gsplit` expense transaction.
  */
 export function owedPortionForTransaction(notes: string | null | undefined): number {
+  if (isRefundedNote(notes)) return 0;
   return parseSplitTokens(notes).reduce((sum, t) => sum + t.amt, 0);
+}
+
+/**
+ * A transaction marked as a refund (`#refund|…`, its amount zeroed) costs
+ * nobody anything, so nobody owes a share of it. Its split tokens stay in the
+ * note (the refund can be undone), but they count for nothing (app 1.0.49,
+ * utils/splitTokenParser.ts).
+ */
+export function isRefundedNote(notes: string | null | undefined): boolean {
+  return Boolean(notes && notes.includes('#refund|'));
 }
 
 /** Generate a short, stable base36 group id. */

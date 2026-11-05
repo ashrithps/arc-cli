@@ -85,9 +85,9 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
   goals:
     "Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.",
   debts:
-    "Credit cards, loans and EMIs with a monthly due day. A debt is an ordinary account whose note carries a `#debt|due:N` line — the same line the arc app reads to schedule its payment reminders, so a due day set here reminds you on your phone.",
+    "Credit cards, loans and BNPL plans as the arc app (1.0.49+) follows them: each a cycle with a due date, amount due, minimum and state (paid / part paid / unpaid / overdue), plus payoff maths and the \"Pay here first\" plan. A debt's details live in its account note as one `#debt|` line, and statement figures in an `arc-debt-cycles:<account>` note, so what you set or record here shows on the phone and vice versa. Cards in another currency are judged in their own currency.",
   splits:
-    "Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.",
+    "Share a transaction with other people and track what they owe you. Two kinds live in a budget: `#gsplit|` tokens in transaction notes (a virtual overlay — no money moves, and balances, registers and reconciliation are untouched), and the arc app's IOUs ledger (1.0.49+), one on-budget account whose rows are what each person owes you or you owe them (read it with `ious`).",
   reconcile:
     "Check a bank statement (CSV or JSON) against an account's transactions: what matches, what the ledger is missing, what the bank never saw, and where the amounts disagree. Uses the same matching as the arc app's statement import, so fuzzy merchant names, posting-date drift and FX estimates line up. Statement amounts are signed from the account holder's side (negative = money out).",
   server:

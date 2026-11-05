@@ -715,20 +715,41 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   arc_goals_delete: async ({ client, writer }, { goal }) =>
     goalOps.deleteGoal(client, writer, goal),
 
-  // debts (credit cards / loans stored as `#debt|` account-note tags) ────────
+  // debts (cards, loans, BNPL: `#debt|` account-note tags + `arc-debt-cycles:` notes) ──
   arc_debts_list: async ({ client }) => debtOps.listDebts(client),
-  arc_debts_set: async ({ client, writer }, { account, due }) =>
-    debtOps.setDebt(client, writer, await accountOps.resolveAccountId(client, account), {
-      dueDay: due,
-    }),
+  arc_debts_show: async ({ client }, { account }) =>
+    debtOps.showDebt(client, await accountOps.resolveAccountId(client, account)),
+  arc_debts_set: async ({ client, writer }, { account, ...fields }) =>
+    debtOps.setDebt(client, writer, await accountOps.resolveAccountId(client, account), debtOps.debtUpdatesFromArgs(fields)),
   arc_debts_clear: async ({ client, writer }, { account }) =>
     debtOps.clearDebt(client, writer, await accountOps.resolveAccountId(client, account)),
+  arc_debts_record: async ({ client, writer }, { account, source, ...figures }) =>
+    debtOps.recordDebtStatement(
+      client,
+      writer,
+      await accountOps.resolveAccountId(client, account),
+      debtOps.statementFiguresFromArgs(figures),
+      source === 'import' ? 'import' : 'typed'
+    ),
+  arc_debts_mark_paid: async ({ client, writer }, { account, due, undo }) =>
+    debtOps.markDebtPaid(client, writer, await accountOps.resolveAccountId(client, account), { due, paid: !undo }),
+  arc_debts_payoff: async ({ client }, { account, payment, extra, lump, rate }) =>
+    debtOps.simulatePayoff(client, await accountOps.resolveAccountId(client, account), {
+      payment: dollarsToCents(payment),
+      extra: dollarsToCents(extra),
+      lump: dollarsToCents(lump),
+      rate,
+    }),
+  arc_debts_plan: async ({ client }, { extra, method }) =>
+    debtOps.payoffPlanFor(client, { extra: dollarsToCents(extra), method }),
 
   // splits (group splits stored as `#gsplit|` transaction-note tokens) ────────
   arc_splits_list: async ({ client }, { person, open, start, end }) =>
     splitOps.listSplitGroups(client, { person, openOnly: !!open, start, end }),
   arc_splits_balances: async ({ client }, { start, end }) =>
     splitOps.getReceivables(client, { start, end }),
+  arc_splits_ious: async ({ client }, { person, history }) =>
+    splitOps.listIouBalances(client, { person, history: !!history }),
   arc_splits_create: async ({ client, writer }, args) =>
     splitOps.createSplit(client, writer, {
       transactionId: args.transaction,

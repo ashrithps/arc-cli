@@ -16,7 +16,7 @@ arc cli connects to your budget through [arc](https://arc.moi). It works with ar
 
 arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actualbudget.org). One install gives you:
 
-- an `arc` command-line interface covering accounts, transactions, categories and category groups, payees, tags, rules, schedules, budget months, savings goals, debts, budget templates, group splits, refunds, statement reconciliation, duplicate detection, investment portfolios, and reports
+- an `arc` command-line interface covering accounts, transactions, categories and category groups, payees, tags, rules, schedules, budget months, savings goals, debts (cards, loans and BNPL plans: each cycle's amount due and state, statement figures, payoff maths and "Pay here first"), budget templates, group splits, refunds, statement reconciliation, duplicate detection, investment portfolios, and reports
 - a terminal UI via `arc ui`
 - a stdio MCP server via `arc mcp` that exposes every data operation as a structured tool for agents
 
@@ -100,7 +100,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 108 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 114 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -792,29 +792,59 @@ Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, 
 
 ## Debts
 
-Credit cards, loans and EMIs with a monthly due day. A debt is an ordinary account whose note carries a `#debt|due:N` line — the same line the arc app reads to schedule its payment reminders, so a due day set here reminds you on your phone.
+Credit cards, loans and BNPL plans as the arc app (1.0.49+) follows them: each a cycle with a due date, amount due, minimum and state (paid / part paid / unpaid / overdue), plus payoff maths and the "Pay here first" plan. A debt's details live in its account note as one `#debt|` line, and statement figures in an `arc-debt-cycles:<account>` note, so what you set or record here shows on the phone and vice versa. Cards in another currency are judged in their own currency.
 
-- **`arc debts list`** — List accounts marked as debts (credit cards, loans, EMIs) with their monthly due day, days until the next due date, and current balance. Soonest due first. _Approval: runs._
+- **`arc debts list`** — List every debt — credit cards, loans and BNPL plans, tagged or found by account type — with this cycle's state as the arc app judges it: due date, amount due (statement or derived), minimum, paid, left, overdue days, limit and utilisation, rate, autopay and the on-time streak. Also returns overdrawn accounts (kept out of debt totals) and totals: owed, interest and fees this month/year, paydown pace and the debt-free month. Most urgent first. _Approval: runs._
 
   ```bash
   arc debts list
   ```
 
-- **`arc debts set`** — Mark an account as a debt with a monthly payment due day, or change its due day. Writes `#debt|due:N` into the account note (other note content is kept); the arc app uses it for payment reminders. _Approval: asks._
+- **`arc debts show`** — One debt in full, as the arc app's card/loan detail shows it: its details (`#debt|` tag), the cycle being judged (window, amount due and its source, minimum, paid, left, state, days past due, late-reporting days for its region), the last 12 cycles as dots with on-time and in-full streaks, progress (paid off, down this month, pace), interest and fees, limit and utilisation, payoff at the current payment, a loan's position against its schedule, the suggested interest split of the latest instalment, which account to pay from, milestones reached, and the stored cycle records. _Approval: runs._
 
   ```bash
-  arc debts set --account 'Amex' --due 15
+  arc debts show --account 'HDFC Card'
   ```
 
-- **`arc debts clear`** — Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance and its transactions are untouched. _Approval: asks._
+- **`arc debts set`** — Mark an account as a card, loan or BNPL plan, or change any of its details: due day, statement day, credit limit, rate, minimum rule, autopay, region, currency, promo end, and a loan's or plan's schedule (instalment, start, term, principal, count, spacing, first date). Only the fields passed change; every other field (including ones a newer arc wrote) and every other line of the account note are kept. Writes the `#debt|` line the arc app reads for its cycle, reminders and payoff. Amounts are major units of the debt's own currency. _Approval: asks._
+
+  ```bash
+  arc debts set --account 'HDFC Card' --due 5 --statement-day 18 --limit 300000 --rate 42 --min '5%/200'
+  ```
+
+- **`arc debts clear`** — Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance, its transactions and its cycle records are untouched. _Approval: asks._
 
   ```bash
   arc debts clear --account 'Amex'
   ```
 
+- **`arc debts record`** — Keep a statement's figures on a debt's cycle (the arc app's `arc-debt-cycles:<account>` note): statement balance, minimum due, due date, statement date, credit limit, available limit, and optionally previous balance, interest, fees, and a loan's outstanding/principal/interest. Decimals in the debt's own currency. Merged field by field — typed beats import beats capture — so pass source 'import' for figures read from a statement file. With no due date, the figures go under the due date after the statement date (the tag's due day). The cycle's amount due and minimum then come from these figures. _Approval: asks._
+
+  ```bash
+  arc debts record --account 'HDFC Card' --balance 48210 --minimum 2410 --due-date 2026-12-05 --statement-date 2026-11-18
+  ```
+
+- **`arc debts mark-paid`** — "Already paid? Mark as paid": records that a cycle is paid whatever the rows say (paid from an account arc doesn't track, say), or takes the mark back with undo. Defaults to the cycle being judged now. _Approval: asks._
+
+  ```bash
+  arc debts mark-paid --account 'HDFC Card'
+  ```
+
+- **`arc debts payoff`** — Payoff maths for one debt, by the arc app's rules (interest monthly on what's owed, charged before the payment): months and interest at the current payment (minimum, rule, instalment or an estimate) or a payment you give, what an extra each month saves, and what a one-off lump saves — keeping the instalment (ends sooner) or keeping the end month (instalment drops). Amounts in and out are the debt's own currency; inputs in major units, results in minor units. _Approval: runs._
+
+  ```bash
+  arc debts payoff --account 'HDFC Card'
+  ```
+
+- **`arc debts plan`** — "Pay here first": which debt spare money should go to. Every debt pays its minimum each month and what a cleared debt was paying rolls on to the next. Avalanche (highest rate first; needs every rate) and snowball (smallest first), each with the first debt, the order they clear, months, total interest and the debt-free month. Minimums that had to be estimated are flagged. Budget currency. _Approval: runs._
+
+  ```bash
+  arc debts plan
+  ```
+
 ## Group Splits
 
-Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
+Share a transaction with other people and track what they owe you. Two kinds live in a budget: `#gsplit|` tokens in transaction notes (a virtual overlay — no money moves, and balances, registers and reconciliation are untouched), and the arc app's IOUs ledger (1.0.49+), one on-budget account whose rows are what each person owes you or you owe them (read it with `ious`).
 
 - **`arc splits list`** — List group splits, one entry per split event, with each person's share, what they owe, and whether they have settled. _Approval: runs._
 
@@ -826,6 +856,12 @@ Share a transaction with other people and track what they owe you. Splits are a 
 
   ```bash
   arc splits balances
+  ```
+
+- **`arc splits ious`** — Who owes whom in the IOUs ledger the arc app (1.0.49+) keeps in the budget: one on-budget account (note tag `#iou:v1`) whose rows are what each person owes you (positive) and what you owe them (negative), with settle-ups and write-offs. Returns each person's balance, their open shares oldest first (payments go to the oldest), totals owed to you and by you, and saved groups. Matches the app's IOUs view: rows from shared arc Splits and balances carried into a Splits thread are left out, since those settle in Splits. Shared Splits threads themselves are sealed on arc's servers and not readable here. _Approval: runs._
+
+  ```bash
+  arc splits ious
   ```
 
 - **`arc splits create`** — Share a transaction with one or more people. Four modes: equal, percent, exact, shares. Records what each person owes without moving any money. _Approval: asks._

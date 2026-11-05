@@ -151,7 +151,7 @@ Two things follow:
 `arc wake` is the command-line spelling, and `arc server wake` is the same
 thing.
 
-## Note-Backed Features (goals, splits, refunds, portfolio)
+## Note-Backed Features (goals, debts, splits, refunds, portfolio)
 
 Several arc features do not live in their own Actual tables. They are stored as
 structured tokens inside **note bodies** — account notes, transaction notes — so
@@ -185,6 +185,28 @@ account instead.
 moves: balances, registers and reconciliation are untouched. Four modes —
 `equal`, `percent`, `exact`, `shares` — and `--include-self` decides whether an
 equal split is n ways or n+1. `arc splits balances` is the "who owes me" view.
+A transaction marked as a refund owes nobody anything: its split tokens stay in
+the note but count for nothing, as in the app.
+
+### Debts
+
+A card, loan or BNPL plan carries one `#debt|` line in its account note (due
+day, statement day, limit, rate, minimum rule, autopay, a loan's or plan's
+schedule), and statement figures live in a separate `arc-debt-cycles:<account>`
+note. `arc debts list` and `arc debts show` judge each cycle by the app's own
+rule, so "paid", "part paid", "unpaid" and "overdue" mean exactly what the
+phone shows. Untagged cards and off-budget loans that owe money count as debt
+too; any other account below zero is *overdrawn*, never debt.
+
+- `arc debts set` changes only the fields you pass and keeps the rest,
+  including keys a newer arc wrote. `--clear rate,promo` removes fields.
+- `arc debts record` keeps figures from a statement. Pass `--source import`
+  when you read them from a statement file, so a figure the user typed in the
+  app still wins.
+- Figures marked as the card's (amount due, minimum, limit) are in the debt's
+  own currency; owed and totals are in the budget's.
+- `arc debts plan` is the app's "Pay here first": avalanche needs every debt's
+  rate, snowball works without them.
 
 ### Refunds
 
@@ -1465,18 +1487,30 @@ arc goals delete --goal 'Japan trip'
 
 ## Debts
 
-Credit cards, loans and EMIs with a monthly due day. A debt is an ordinary account whose note carries a `#debt|due:N` line — the same line the arc app reads to schedule its payment reminders, so a due day set here reminds you on your phone.
+Credit cards, loans and BNPL plans as the arc app (1.0.49+) follows them: each a cycle with a due date, amount due, minimum and state (paid / part paid / unpaid / overdue), plus payoff maths and the "Pay here first" plan. A debt's details live in its account note as one `#debt|` line, and statement figures in an `arc-debt-cycles:<account>` note, so what you set or record here shows on the phone and vice versa. Cards in another currency are judged in their own currency.
 
 ### `arc debts list`
 
 - mode: **read**
 - risk: **read** · approval under Standard: **runs**
 - mcp tool: `arc_debts_list`
-- List accounts marked as debts (credit cards, loans, EMIs) with their monthly due day, days until the next due date, and current balance. Soonest due first.
+- List every debt — credit cards, loans and BNPL plans, tagged or found by account type — with this cycle's state as the arc app judges it: due date, amount due (statement or derived), minimum, paid, left, overdue days, limit and utilisation, rate, autopay and the on-time streak. Also returns overdrawn accounts (kept out of debt totals) and totals: owed, interest and fees this month/year, paydown pace and the debt-free month. Most urgent first.
 
 ```bash
 arc debts list
 arc debts list --json
+```
+
+### `arc debts show`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_debts_show`
+- One debt in full, as the arc app's card/loan detail shows it: its details (`#debt|` tag), the cycle being judged (window, amount due and its source, minimum, paid, left, state, days past due, late-reporting days for its region), the last 12 cycles as dots with on-time and in-full streaks, progress (paid off, down this month, pace), interest and fees, limit and utilisation, payoff at the current payment, a loan's position against its schedule, the suggested interest split of the latest instalment, which account to pay from, milestones reached, and the stored cycle records.
+
+```bash
+arc debts show --account 'HDFC Card'
+arc debts show --account 'Car loan' --json
 ```
 
 ### `arc debts set`
@@ -1484,11 +1518,13 @@ arc debts list --json
 - mode: **write**
 - risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_debts_set`
-- Mark an account as a debt with a monthly payment due day, or change its due day. Writes `#debt|due:N` into the account note (other note content is kept); the arc app uses it for payment reminders.
+- Mark an account as a card, loan or BNPL plan, or change any of its details: due day, statement day, credit limit, rate, minimum rule, autopay, region, currency, promo end, and a loan's or plan's schedule (instalment, start, term, principal, count, spacing, first date). Only the fields passed change; every other field (including ones a newer arc wrote) and every other line of the account note are kept. Writes the `#debt|` line the arc app reads for its cycle, reminders and payoff. Amounts are major units of the debt's own currency.
 
 ```bash
-arc debts set --account 'Amex' --due 15
-arc debts set --account 'Car loan' --due 5
+arc debts set --account 'HDFC Card' --due 5 --statement-day 18 --limit 300000 --rate 42 --min '5%/200'
+arc debts set --account 'Car loan' --kind loan --due 5 --emi 412 --start 2024-04 --term 60 --principal 20000 --rate 7.9
+arc debts set --account 'Klarna' --kind bnpl --due 14 --emi 25 --instalments 4 --every 2w --first 2026-10-17
+arc debts set --account 'Amex' --autopay full --clear rate,promo
 ```
 
 ### `arc debts clear`
@@ -1496,15 +1532,63 @@ arc debts set --account 'Car loan' --due 5
 - mode: **write**
 - risk: **write** · approval under Standard: **asks**
 - mcp tool: `arc_debts_clear`
-- Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance and its transactions are untouched.
+- Stop treating an account as a debt: removes the `#debt|` line from its note. The account, its balance, its transactions and its cycle records are untouched.
 
 ```bash
 arc debts clear --account 'Amex'
 ```
 
+### `arc debts record`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_debts_record`
+- Keep a statement's figures on a debt's cycle (the arc app's `arc-debt-cycles:<account>` note): statement balance, minimum due, due date, statement date, credit limit, available limit, and optionally previous balance, interest, fees, and a loan's outstanding/principal/interest. Decimals in the debt's own currency. Merged field by field — typed beats import beats capture — so pass source 'import' for figures read from a statement file. With no due date, the figures go under the due date after the statement date (the tag's due day). The cycle's amount due and minimum then come from these figures.
+
+```bash
+arc debts record --account 'HDFC Card' --balance 48210 --minimum 2410 --due-date 2026-12-05 --statement-date 2026-11-18
+arc debts record --account 'HDFC Card' --available 251790 --source import
+```
+
+### `arc debts mark-paid`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_debts_mark_paid`
+- "Already paid? Mark as paid": records that a cycle is paid whatever the rows say (paid from an account arc doesn't track, say), or takes the mark back with undo. Defaults to the cycle being judged now.
+
+```bash
+arc debts mark-paid --account 'HDFC Card'
+arc debts mark-paid --account 'HDFC Card' --due 2026-11-05 --undo
+```
+
+### `arc debts payoff`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_debts_payoff`
+- Payoff maths for one debt, by the arc app's rules (interest monthly on what's owed, charged before the payment): months and interest at the current payment (minimum, rule, instalment or an estimate) or a payment you give, what an extra each month saves, and what a one-off lump saves — keeping the instalment (ends sooner) or keeping the end month (instalment drops). Amounts in and out are the debt's own currency; inputs in major units, results in minor units.
+
+```bash
+arc debts payoff --account 'HDFC Card'
+arc debts payoff --account 'Car loan' --extra 100 --lump 2000
+```
+
+### `arc debts plan`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_debts_plan`
+- "Pay here first": which debt spare money should go to. Every debt pays its minimum each month and what a cleared debt was paying rolls on to the next. Avalanche (highest rate first; needs every rate) and snowball (smallest first), each with the first debt, the order they clear, months, total interest and the debt-free month. Minimums that had to be estimated are flagged. Budget currency.
+
+```bash
+arc debts plan
+arc debts plan --extra 200 --method avalanche --json
+```
+
 ## Group Splits
 
-Share a transaction with other people and track what they owe you. Splits are a virtual overlay written into transaction notes as `#gsplit|` tokens — no money moves, and balances, registers and reconciliation are untouched.
+Share a transaction with other people and track what they owe you. Two kinds live in a budget: `#gsplit|` tokens in transaction notes (a virtual overlay — no money moves, and balances, registers and reconciliation are untouched), and the arc app's IOUs ledger (1.0.49+), one on-budget account whose rows are what each person owes you or you owe them (read it with `ious`).
 
 ### `arc splits list`
 
@@ -1528,6 +1612,18 @@ arc splits list --person Sam --open --json
 ```bash
 arc splits balances
 arc splits balances --json
+```
+
+### `arc splits ious`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_splits_ious`
+- Who owes whom in the IOUs ledger the arc app (1.0.49+) keeps in the budget: one on-budget account (note tag `#iou:v1`) whose rows are what each person owes you (positive) and what you owe them (negative), with settle-ups and write-offs. Returns each person's balance, their open shares oldest first (payments go to the oldest), totals owed to you and by you, and saved groups. Matches the app's IOUs view: rows from shared arc Splits and balances carried into a Splits thread are left out, since those settle in Splits. Shared Splits threads themselves are sealed on arc's servers and not readable here.
+
+```bash
+arc splits ious
+arc splits ious --person Sam --history --json
 ```
 
 ### `arc splits create`

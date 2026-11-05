@@ -1272,6 +1272,14 @@ async function handleSplits(
       if (isJson(flags)) return printJson(groups);
       return ui.printSplitGroups(groups);
     }
+    case 'ious': {
+      const ious = await splits.listIouBalances(client, {
+        person: getFlag(flags, 'person'),
+        history: flags.history === 'true',
+      });
+      if (isJson(flags)) return printJson(ious);
+      return ui.printIous(ious);
+    }
     case 'balances': {
       const balances = await splits.getReceivables(client, {
         start: getFlag(flags, 'start'),
@@ -1333,7 +1341,7 @@ async function handleSplits(
     }
     default:
       throw new Error(
-        `Unknown splits subcommand: ${sub}. Use: list, balances, create, settle, reopen, remove, delete`
+        `Unknown splits subcommand: ${sub}. Use: list, balances, ious, create, settle, reopen, remove, delete`
       );
   }
 }
@@ -1368,19 +1376,79 @@ async function handleDebts(
 ) {
   const accountId = () => accounts.resolveAccountId(client, requireFlag(flags, 'account', 'id'));
 
+  // Flags as the registry names them (snake_case), for the shared argument readers.
+  const args = Object.fromEntries(Object.entries(flags).map(([k, v]) => [k.replace(/-/g, '_'), v]));
+  const major = (key: string): number | undefined => {
+    if (flags[key] === undefined) return undefined;
+    const n = parseFloat(flags[key]);
+    if (!Number.isFinite(n)) throw new Error(`Invalid --${key}: ${flags[key]}. Use a number.`);
+    return amountToCents(n);
+  };
+
   switch (sub) {
     case 'list': {
       const list = await debts.listDebts(client);
       if (isJson(flags)) return printJson(list);
       return ui.printDebts(list);
     }
-    case 'set': {
-      const debt = await debts.setDebt(client, writer, await accountId(), {
-        dueDay: parseInt(requireFlag(flags, 'due'), 10),
-      });
+    case 'show': {
+      const debt = await debts.showDebt(client, await accountId());
       if (isJson(flags)) return printJson(debt);
-      console.log(`${debt.accountName} is due on day ${debt.dueDay} of each month.`);
+      return ui.printDebtDetail(debt);
+    }
+    case 'set': {
+      const res = await debts.setDebt(client, writer, await accountId(), debts.debtUpdatesFromArgs(args));
+      if (isJson(flags)) return printJson(res);
+      console.log(
+        res.tagLine
+          ? `${res.accountName}: ${res.tagLine}`
+          : `${res.accountName} has no debt details left; the line was removed.`
+      );
       return;
+    }
+    case 'record': {
+      const source = flags.source === 'import' ? 'import' : flags.source === undefined || flags.source === 'typed' ? 'typed' : null;
+      if (!source) throw new Error(`Invalid --source: ${flags.source}. Use typed or import.`);
+      const res = await debts.recordDebtStatement(client, writer, await accountId(), debts.statementFiguresFromArgs(args), source);
+      if (isJson(flags)) return printJson(res);
+      console.log(
+        res.recorded === 'cycle'
+          ? `Kept on ${res.accountName}'s cycle due ${res.due}.`
+          : `${res.accountName} has no due day: kept the available limit beside its cycles.`
+      );
+      return;
+    }
+    case 'mark-paid': {
+      const res = await debts.markDebtPaid(client, writer, await accountId(), {
+        due: flags.due,
+        paid: flags.undo !== 'true',
+      });
+      if (isJson(flags)) return printJson(res);
+      console.log(
+        res.paid
+          ? `${res.accountName}: the cycle due ${res.due} is marked paid.`
+          : `${res.accountName}: took the paid mark off the cycle due ${res.due}.`
+      );
+      return;
+    }
+    case 'payoff': {
+      const res = await debts.simulatePayoff(client, await accountId(), {
+        payment: major('payment'),
+        extra: major('extra'),
+        lump: major('lump'),
+        rate: flags.rate !== undefined ? parseFloat(flags.rate) : undefined,
+      });
+      if (isJson(flags)) return printJson(res);
+      return ui.printDebtPayoff(res);
+    }
+    case 'plan': {
+      const method = flags.method;
+      if (method !== undefined && method !== 'avalanche' && method !== 'snowball') {
+        throw new Error(`Invalid --method: ${method}. Use avalanche or snowball.`);
+      }
+      const res = await debts.payoffPlanFor(client, { extra: major('extra'), method });
+      if (isJson(flags)) return printJson(res);
+      return ui.printDebtPlan(res);
     }
     case 'clear': {
       const res = await debts.clearDebt(client, writer, await accountId());
@@ -1393,7 +1461,7 @@ async function handleDebts(
       return;
     }
     default:
-      throw new Error(`Unknown debts subcommand: ${sub}. Use: list, set, clear`);
+      throw new Error(`Unknown debts subcommand: ${sub}. Use: list, show, set, clear, record, mark-paid, payoff, plan`);
   }
 }
 

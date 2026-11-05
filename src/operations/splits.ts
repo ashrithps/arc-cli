@@ -12,7 +12,20 @@ import type { ActualClient } from '../client.js';
 import type { SafeWriter } from '../safe-writer.js';
 import type { Transaction } from '../types.js';
 import {
+  IOU_ACCOUNT_TAG,
+  iouEntries,
+  lessCarried,
+  parseIouCarries,
+  parseIouGroups,
+  personBalances,
+  shareStatuses,
+  stripIouMarkers,
+  type IouRow,
+} from '../codecs/iou-ledger.js';
+import { readAllNotes } from './notes.js';
+import {
   generateGid,
+  isRefundedNote,
   owedPortionForTransaction,
   parseSplitTokens,
   personKey,
@@ -87,6 +100,8 @@ export async function listSplitTransactions(
   for (const account of accounts as any[]) {
     const txns = await client.api.getTransactions(account.id, options.start, options.end);
     for (const t of txns as any[]) {
+      // Refunded: nobody owes a share of it (app 1.0.49, SplitTagService).
+      if (isRefundedNote(t.notes)) continue;
       const tokens = parseSplitTokens(t.notes);
       if (tokens.length === 0) continue;
       for (const token of tokens) {
@@ -474,4 +489,106 @@ export async function getOwedAdjustments(
     }
   }
   return map;
+}
+
+// ── The IOUs ledger (app 1.0.49 Splits) ─────────────────────────────────────
+
+export interface IouPerson {
+  person: string;
+  /** Positive: they owe you. Negative: you owe them. Minor units. */
+  balance: number;
+  lastDate: string;
+  /** Shares and debts not yet settled, oldest first (payments go to the oldest). */
+  open: Array<{ id: string; date: string; kind: string; amount: number; left: number; status: string; label: string; category: string | null }>;
+  /** Every row with them, newest first (only with `history`). */
+  entries?: Array<{ id: string; date: string; kind: string; amount: number; label: string; category: string | null }>;
+}
+
+/**
+ * Who owes whom in the IOUs ledger the arc app (1.0.49+) keeps in the budget:
+ * one on-budget account (note tag `#iou:v1`) whose rows are what people owe
+ * you (positive) and what you owe them (negative). Balances leave out rows a
+ * shared arc split wrote (they settle in Splits) and balances carried into a
+ * Splits thread, exactly as the app's IOUs screen does. Read-only: shared
+ * Splits threads themselves are sealed on arc's servers and not reachable here.
+ */
+export async function listIouBalances(
+  client: ActualClient,
+  options: { person?: string; history?: boolean } = {}
+): Promise<{
+  account: { id: string; name: string } | null;
+  owedToYou: number;
+  youOwe: number;
+  people: IouPerson[];
+  groups: Array<{ id: string; name: string; people: string[] }>;
+}> {
+  client.ensureConnected();
+  const [accounts, notes, payees, groups] = await Promise.all([
+    client.api.getAccounts() as Promise<any[]>,
+    readAllNotes(client),
+    client.api.getPayees() as Promise<any[]>,
+    client.api.getCategoryGroups() as Promise<any[]>,
+  ]);
+  const open = new Map(accounts.filter((a) => !a.closed).map((a) => [a.id, a]));
+  const tagged = notes.find((n) => n.id.startsWith('account-') && n.note.includes(IOU_ACCOUNT_TAG) && open.has(n.id.slice(8)));
+  const account = tagged ? open.get(tagged.id.slice(8)) : undefined;
+  if (!account) return { account: null, owedToYou: 0, youOwe: 0, people: [], groups: [] };
+  const accountNote = tagged!.note;
+
+  const payeeName = new Map(payees.map((p: any) => [p.id, p.name ?? null]));
+  const categoryName = new Map<string, string>();
+  for (const g of groups ?? []) for (const c of g.categories ?? []) categoryName.set(c.id, c.name);
+  const res: any = await client.api.aqlQuery(
+    client.api
+      .q('transactions')
+      .filter({ account: account.id })
+      .options({ splits: 'inline' })
+      .select(['id', 'date', 'amount', 'notes', 'payee', 'category'])
+  );
+  const rows: IouRow[] = (res?.data ?? []).map((t: any) => ({
+    id: t.id,
+    date: t.date,
+    amount: t.amount ?? 0,
+    payee: t.payee ? payeeName.get(t.payee) ?? null : null,
+    notes: t.notes ?? null,
+    categoryId: t.category ?? null,
+    categoryName: t.category ? categoryName.get(t.category) ?? null : null,
+  }));
+  const entries = iouEntries(rows);
+  const balances = lessCarried(personBalances(entries.filter((e) => !e.marker?.gid?.startsWith('s:'))), parseIouCarries(accountNote));
+  const wanted = options.person ? personKey(options.person) : null;
+  const people: IouPerson[] = balances
+    .filter((b) => !wanted || personKey(b.person) === wanted)
+    .map((b) => {
+      const statuses = shareStatuses(b.entries);
+      const oldestFirst = [...b.entries].reverse();
+      return {
+        person: b.person,
+        balance: b.balance,
+        lastDate: b.lastDate,
+        open: oldestFirst
+          .filter((e) => statuses.get(e.id) && statuses.get(e.id)!.status !== 'settled')
+          .map((e) => ({
+            id: e.id,
+            date: e.date,
+            kind: e.kind,
+            amount: e.amount,
+            left: statuses.get(e.id)!.left,
+            status: statuses.get(e.id)!.status,
+            label: stripIouMarkers(e.notes),
+            category: e.categoryName ?? null,
+          })),
+        ...(options.history
+          ? { entries: b.entries.map((e) => ({ id: e.id, date: e.date, kind: e.kind, amount: e.amount, label: stripIouMarkers(e.notes), category: e.categoryName ?? null })) }
+          : {}),
+      };
+    });
+  if (wanted && people.length === 0) throw new Error(`No one called ${options.person} in the IOUs ledger.`);
+  return {
+    account: { id: account.id, name: account.name },
+    owedToYou: people.reduce((s, p) => s + Math.max(0, p.balance), 0),
+    youOwe: people.reduce((s, p) => s + Math.max(0, -p.balance), 0),
+    people,
+    groups: parseIouGroups(accountNote),
+  };
 }

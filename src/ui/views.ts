@@ -311,7 +311,7 @@ export function printHelp() {
   console.log(cmd('query', 'Smart queries (spending, uncategorized)'));
   console.log(cmd('portfolio', 'Holdings, trades, realized P/L, dividends, value history (read-only)'));
   console.log(cmd('goals', 'Savings goals — progress, contributions, deadlines'));
-  console.log(cmd('debts', 'Credit cards and loans — monthly due days for reminders'));
+  console.log(cmd('debts', 'Cards, loans and BNPL — cycle state, statements, payoff, Pay here first'));
   console.log(cmd('splits', 'Group splits — share a cost, track who owes you'));
   console.log(cmd('reconcile', 'Check a bank statement against an account; apply it'));
   console.log(cmd('backup', 'List/clean backups'));
@@ -654,24 +654,174 @@ export function printGoalDetail(goal: any) {
   console.log('');
 }
 
-export function printDebts(debts: any[]) {
+const DEBT_STATE_LABEL: Record<string, string> = {
+  nothing_due: 'nothing due',
+  autopay: 'autopay',
+  paid: 'paid',
+  part_paid: 'part paid',
+  unpaid: 'unpaid',
+  overdue: 'overdue',
+};
+
+function debtStateText(state: string | null | undefined, daysPastDue = 0): string {
+  if (!state) return colors.muted('no due day');
+  const label = DEBT_STATE_LABEL[state] ?? state;
+  if (state === 'overdue') return colors.error(daysPastDue ? `${label} ${daysPastDue}d` : label);
+  if (state === 'paid' || state === 'nothing_due') return colors.success(label);
+  if (state === 'part_paid') return colors.warning(label);
+  return label;
+}
+
+const money = (v: number | null | undefined, cur?: string | null) =>
+  v == null ? colors.muted('—') : `${formatCurrency(v)}${cur ? ` ${cur}` : ''}`;
+const pct = (v: number | null | undefined) => (v == null ? colors.muted('—') : `${Math.round(v * 100)}%`);
+
+export function printDebts(list: any) {
+  const debts: any[] = list.debts ?? [];
   console.log(header(`Debts (${debts.length})`));
   if (debts.length === 0) {
-    console.log(`  ${colors.muted('No debts tracked. Mark a card or loan with `arc debts set --account <name> --due <day>`.')}\n`);
+    console.log(`  ${colors.muted('No debts. Mark a card or loan with `arc debts set --account <name> --kind card --due <day>`.')}\n`);
+  } else {
+    printTable(debts.map((d: any) => ({
+      account: d.tagged ? d.accountName : `${d.accountName} ${colors.muted('(untagged)')}`,
+      kind: d.kind,
+      owed: money(d.owed),
+      due: d.dueDate ?? colors.muted('—'),
+      state: debtStateText(d.state, d.daysPastDue),
+      'amount due': money(d.amountDue, d.currency),
+      minimum: money(d.minimum, d.currency),
+      left: money(d.left, d.currency),
+      used: pct(d.utilisation),
+    })));
+  }
+  const t = list.totals;
+  if (t && debts.length > 0) {
+    console.log(row('Total owed', formatCurrency(t.owed)));
+    if (t.interestYear || t.feesYear) {
+      console.log(row('Interest this year', formatCurrency(t.interestYear)));
+      console.log(row('Fees this year', formatCurrency(t.feesYear)));
+    }
+    if (t.utilisation != null) console.log(row('Card utilisation', pct(t.utilisation)));
+    if (t.debtFree) console.log(row('Debt-free', `${t.debtFree.month}${t.debtFree.by === 'pace' ? colors.muted(' (at the last three months\' pace)') : colors.muted(' (paying every minimum)')}`));
+  }
+  if (list.overdrawn?.length) {
+    console.log(subheader('Overdrawn (not debt)'));
+    for (const o of list.overdrawn) console.log(row(o.accountName, formatCurrency(o.balance)));
+  }
+  console.log('');
+}
+
+export function printDebtDetail(d: any) {
+  const cur = d.currency;
+  console.log(header(`${d.accountName} · ${d.kind}${d.tagged ? '' : ' (untagged)'}`));
+  console.log(row('Owed', `${formatCurrency(d.owed)}${cur && d.owedCard != null ? colors.muted(` (${formatCurrency(d.owedCard)} ${cur})`) : ''}`));
+  const c = d.cycle;
+  if (c) {
+    console.log(subheader('This cycle'));
+    console.log(row('Due', c.dueDate ?? colors.muted('—')));
+    if (c.statementDate) console.log(row('Statement', c.statementDate));
+    console.log(row('State', debtStateText(c.state, c.daysPastDue)));
+    console.log(row('Amount due', `${money(c.amountDue, cur)}${c.amountDueSource ? colors.muted(` (${c.amountDueSource})`) : ''}`));
+    console.log(row('Minimum', money(c.minimum, cur)));
+    console.log(row('Paid', money(c.paid, cur)));
+    console.log(row('Left', money(c.left, cur)));
+    if (c.reportingDays != null && c.state === 'overdue') console.log(row('Reported after', `${c.reportingDays} days past due`));
+  } else {
+    console.log(`  ${colors.muted('No due day: set one with `arc debts set --due <day>` to follow its cycle.')}`);
+  }
+  const h = d.history;
+  if (h && h.dots.length) {
+    const dot: Record<string, string> = { full: colors.success('●'), min: colors.warning('◐'), none: colors.error('○'), skip: colors.muted('·') };
+    console.log(row('Last cycles', h.dots.map((x: any) => dot[x.dot] ?? '?').join(' ')));
+    console.log(row('On time', `${h.onTime} running${h.inFull ? `, ${h.inFull} in full` : ''} · best ${h.bestOnTime}`));
+  }
+  console.log(subheader('Details'));
+  if (d.tagLine) console.log(row('Tag', colors.muted(d.tagLine)));
+  if (d.limit != null) console.log(row('Limit', `${money(d.limit, cur)} · ${pct(d.utilisation)} used`));
+  if (d.tag?.rate != null) console.log(row('Rate', `${d.tag.rate}% a year`));
+  if (d.promoEnds) console.log(row('Promo ends', d.promoEnds));
+  if (d.charges.interestYear || d.charges.feesYear) {
+    console.log(row('Interest', `${formatCurrency(d.charges.interestMonth)} this month · ${formatCurrency(d.charges.interestYear)} this year`));
+    console.log(row('Fees', `${formatCurrency(d.charges.feesYear)} this year`));
+  }
+  console.log(row('Paid off', `${Math.round(d.progress.paidOff * 100)}% of the most owed`));
+  if (d.payoff?.months != null) {
+    console.log(row('Payoff', `${d.payoff.months} months at ${money(d.payoff.payment, cur)} (${d.payoff.paymentSource}) · ${money(d.payoff.interest, cur)} interest · ${d.payoff.payoffMonth}`));
+  } else if (d.payoff?.neverClears) {
+    console.log(row('Payoff', colors.warning(`${money(d.payoff.payment, cur)} a month never clears it`)));
+  }
+  if (d.loanSchedule) console.log(row('Schedule', `${d.loanSchedule.due} of ${d.loanSchedule.term} instalments due · ${money(d.loanSchedule.scheduledOwed, cur)} owed by the schedule`));
+  if (d.instalmentSplit) console.log(row('Interest in last instalment', `${money(d.instalmentSplit.interest, cur)} of ${money(d.instalmentSplit.payment, cur)} (${d.instalmentSplit.date}), not entered yet`));
+  if (d.payFrom) console.log(row('Pay from', d.payFrom.accountName));
+  if (d.milestones?.length) console.log(row('Milestones', d.milestones.join(', ')));
+  console.log('');
+}
+
+export function printDebtPayoff(p: any) {
+  const cur = p.currency;
+  console.log(header(`Payoff · ${p.accountName}`));
+  console.log(row('Owed', money(p.owed, cur)));
+  console.log(row('Rate', p.rate != null ? `${p.rate}% a year` : colors.muted('not set (no interest counted)')));
+  console.log(row('Payment', `${money(p.payment, cur)} a month`));
+  if (p.run) console.log(row('At that pace', `${p.run.months} months · ${money(p.run.interest, cur)} interest · last payment ${p.run.payoffMonth}`));
+  else if (p.neverClears) console.log(row('At that pace', colors.warning('never clears: the payment does not beat the interest')));
+  if (p.payMore) {
+    console.log(row(`+${formatCurrency(p.payMore.extra)} a month`, `${p.payMore.monthsSooner} months sooner · ${money(p.payMore.interestSaved, cur)} saved · ${p.payMore.payoffMonth}`));
+  }
+  if (p.prepay) {
+    console.log(row(`${formatCurrency(p.prepay.lump)} once, keep the payment`, `${p.prepay.sooner.monthsSooner} months sooner · ${money(p.prepay.sooner.interestSaved, cur)} saved`));
+    console.log(row(`${formatCurrency(p.prepay.lump)} once, keep the end`, `${money(p.prepay.lower.payment, cur)} a month (${money(p.prepay.lower.paymentDrop, cur)} less) · ${money(p.prepay.lower.interestSaved, cur)} saved`));
+  }
+  console.log('');
+}
+
+export function printIous(l: any) {
+  if (!l.account) {
+    console.log(header('IOUs'));
+    console.log(`  ${colors.muted('No IOUs ledger in this budget. The arc app makes one the first time you split with someone.')}\n`);
     return;
   }
-  printTable(debts.map((d: any) => ({
-    account: d.closed ? `${d.accountName} ${colors.muted('(closed)')}` : d.accountName,
-    balance: formatCurrency(d.balance),
-    due: d.dueDay != null ? `day ${d.dueDay}` : colors.muted('—'),
-    next: d.daysUntilDue == null
-      ? colors.muted('—')
-      : d.daysUntilDue === 0
-        ? colors.error('today')
-        : d.daysUntilDue <= 3
-          ? colors.warning(`${d.daysUntilDue}d`)
-          : `${d.daysUntilDue}d`,
+  console.log(header(`IOUs · ${l.account.name}`));
+  if (l.people.length === 0) {
+    console.log(`  ${colors.muted('Nobody owes anything.')}\n`);
+    return;
+  }
+  printTable(l.people.map((p: any) => ({
+    person: p.person,
+    balance: p.balance > 0 ? colors.success(`owes you ${formatCurrency(p.balance)}`) : p.balance < 0 ? colors.warning(`you owe ${formatCurrency(-p.balance)}`) : colors.muted('square'),
+    open: String(p.open.length),
+    last: p.lastDate,
   })));
+  console.log(row('Owed to you', formatCurrency(l.owedToYou)));
+  console.log(row('You owe', formatCurrency(l.youOwe)));
+  if (l.groups.length) console.log(row('Groups', l.groups.map((g: any) => `${g.name} (${g.people.length})`).join(', ')));
+  console.log('');
+}
+
+export function printDebtPlan(p: any) {
+  console.log(header('Pay here first'));
+  if (p.debtsOwing === 0) {
+    console.log(`  ${colors.muted('Nothing owed.')}\n`);
+    return;
+  }
+  printTable(p.debts.map((d: any) => ({
+    account: d.accountName,
+    owed: formatCurrency(d.owed),
+    rate: d.rate != null ? `${d.rate}%` : colors.muted('—'),
+    minimum: `${formatCurrency(d.minimum)}${d.minimumEstimated ? colors.muted(' (est.)') : ''}`,
+  })));
+  console.log(row('Each month', formatCurrency(p.monthlyTotal)));
+  for (const plan of p.plans) {
+    console.log(subheader(plan.method === 'avalanche' ? 'Avalanche (highest rate first)' : 'Snowball (smallest first)'));
+    if (!plan.available) {
+      console.log(`  ${colors.muted(plan.reason)}`);
+      continue;
+    }
+    console.log(row('Pay here first', plan.first.accountName));
+    console.log(row('Order', plan.order.map((o: any) => o.accountName).join(' → ')));
+    console.log(row('Debt-free', `${plan.debtFreeMonth} · ${plan.months} months · ${formatCurrency(plan.interest)} interest`));
+  }
+  console.log('');
 }
 
 function describeRepeat(months: number | null): string {
