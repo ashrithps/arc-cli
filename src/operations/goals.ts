@@ -22,6 +22,7 @@ import {
 } from '../codecs/goal-tag.js';
 import { accountNoteId, mutateNote, readAllNotes } from './notes.js';
 import { validateId } from '../utils/validation.js';
+import { AmbiguousAccountError } from './accounts.js';
 
 export interface Goal extends ParsedGoalAccount {
   accountName: string;
@@ -95,14 +96,20 @@ export async function listGoals(
 export async function getGoal(client: ActualClient, accountRef: string): Promise<Goal> {
   const goals = await listGoals(client, { includeArchived: true });
   const needle = accountRef.toLowerCase();
-  const found = goals.find(
-    g =>
-      g.accountId === accountRef ||
-      g.goalName.toLowerCase() === needle ||
-      g.accountName.toLowerCase() === needle
+  const byId = goals.find(g => g.accountId === accountRef);
+  if (byId) return byId;
+  const matches = goals.filter(
+    g => g.goalName.toLowerCase() === needle || g.accountName.toLowerCase() === needle
   );
-  if (!found) throw new Error(`Goal not found: ${accountRef}`);
-  return found;
+  if (matches.length > 1) {
+    throw new Error(
+      `"${accountRef}" matches ${matches.length} goals: ${matches
+        .map(g => `${g.goalName} on ${g.accountName} (id ${g.accountId})`)
+        .join('; ')}. Pass the account's id instead of a name.`
+    );
+  }
+  if (!matches.length) throw new Error(`Goal not found: ${accountRef}`);
+  return matches[0];
 }
 
 /** Resolve a goal reference to its account id, erroring if it is not a goal. */
@@ -157,9 +164,10 @@ export async function createGoal(
   client.ensureConnected();
   const accounts = await client.api.getAccounts();
   const needle = params.account.toLowerCase();
-  const account = (accounts as any[]).find(
-    a => a.id === params.account || a.name?.toLowerCase() === needle
-  );
+  const byId = (accounts as any[]).find(a => a.id === params.account);
+  const named = byId ? [byId] : (accounts as any[]).filter(a => a.name?.toLowerCase() === needle);
+  if (named.length > 1) throw new AmbiguousAccountError(params.account, named);
+  const account = named[0];
   if (!account) throw new Error(`Account not found: ${params.account}`);
 
   const existing = await readAllNotes(client);

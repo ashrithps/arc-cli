@@ -1,4 +1,5 @@
 import type { ActualClient } from '../client.js';
+import { pickOne } from '../utils/resolve-ref.js';
 import type { SafeWriter } from '../safe-writer.js';
 import type { Payee } from '../types.js';
 import { validateId, validateName } from '../utils/validation.js';
@@ -65,17 +66,11 @@ export async function findPayeeByName(client: ActualClient, name: string): Promi
 export async function resolvePayeeId(client: ActualClient, nameOrId: string): Promise<string> {
   const payees = await listPayees(client);
 
-  const byId = payees.find(p => p.id === nameOrId);
-  if (byId) return byId.id;
-
-  const lower = nameOrId.toLowerCase();
-  const byName = payees.find(p => p.name.toLowerCase() === lower);
-  if (byName) return byName.id;
-
-  const partial = payees.find(p => p.name.toLowerCase().includes(lower));
-  if (partial) return partial.id;
-
-  throw new Error(`Payee not found: "${nameOrId}". Use 'payees list' to see available payees.`);
+  return pickOne(payees, nameOrId, {
+    kind: 'payee',
+    nameOf: p => p.name,
+    notFound: () => new Error(`Payee not found: "${nameOrId}". Use 'payees list' to see available payees.`),
+  }).id;
 }
 
 export async function getTransferPayees(client: ActualClient): Promise<Payee[]> {

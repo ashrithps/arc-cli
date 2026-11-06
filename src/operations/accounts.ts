@@ -1,4 +1,5 @@
 import type { ActualClient } from '../client.js';
+import { AmbiguousRefError, pickOne } from '../utils/resolve-ref.js';
 import type { SafeWriter } from '../safe-writer.js';
 import type { Account } from '../types.js';
 import { validateId, validateName } from '../utils/validation.js';
@@ -161,20 +162,30 @@ export async function findAccountByName(client: ActualClient, name: string): Pro
   return accounts.find((a: any) => a.name.toLowerCase() === lower);
 }
 
+/** Several accounts answer to one reference: refused, with their ids (src/utils/resolve-ref.ts). */
+export class AmbiguousAccountError extends AmbiguousRefError {
+  constructor(ref: string, matches: Array<{ id: string; name: string; closed?: boolean | number | null; offbudget?: boolean | number | null }>) {
+    super('account', ref, matches.map(describeAccount));
+    this.message = this.message.replace(/\.$/, ', e.g. --account <id>.');
+    this.name = 'AmbiguousAccountError';
+  }
+}
+
+function describeAccount(a: { id: string; name: string; closed?: boolean | number | null; offbudget?: boolean | number | null }): string {
+  return `${a.name} (id ${a.id}${a.closed ? ', closed' : ''}${a.offbudget ? ', off budget' : ''})`;
+}
+
+/** The one account a reference names: id, else exact name, else part of a name; more than one is refused. */
+export function pickAccount<A extends { id: string; name: string }>(accounts: readonly A[], nameOrId: string): A {
+  return pickOne(accounts, nameOrId, {
+    kind: 'account',
+    nameOf: (a) => a.name,
+    ambiguous: (matches) => new AmbiguousAccountError(nameOrId, matches),
+    notFound: () => new Error(`Account not found: "${nameOrId}". Available: ${accounts.map((a) => a.name).join(', ')}`),
+  });
+}
+
 export async function resolveAccountId(client: ActualClient, nameOrId: string): Promise<string> {
-  // Try as direct ID first
-  const accounts = await client.api.getAccounts();
-  const byId = accounts.find((a: any) => a.id === nameOrId);
-  if (byId) return byId.id;
-
-  // Try by name (case-insensitive)
-  const lower = nameOrId.toLowerCase();
-  const byName = accounts.find((a: any) => a.name.toLowerCase() === lower);
-  if (byName) return byName.id;
-
-  // Try partial match
-  const partial = accounts.find((a: any) => a.name.toLowerCase().includes(lower));
-  if (partial) return partial.id;
-
-  throw new Error(`Account not found: "${nameOrId}". Available: ${accounts.map((a: any) => a.name).join(', ')}`);
+  const accounts = (await client.api.getAccounts()) as Array<{ id: string; name: string }>;
+  return pickAccount(accounts, nameOrId).id;
 }

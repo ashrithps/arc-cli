@@ -21,7 +21,7 @@ import type { PublicOperation } from "./registry-types.js";
 
 const accountRef = z
   .string()
-  .describe("Account name or UUID. Names are resolved case-insensitively.");
+  .describe("Account name or UUID. Names are resolved case-insensitively; a name more than one account answers to is refused with their ids, so pass the id.");
 
 const categoryRef = z
   .string()

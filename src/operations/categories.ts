@@ -1,4 +1,5 @@
 import type { ActualClient } from '../client.js';
+import { pickOne } from '../utils/resolve-ref.js';
 import type { SafeWriter } from '../safe-writer.js';
 import type { Category, CategoryGroup } from '../types.js';
 import { validateId, validateName } from '../utils/validation.js';
@@ -26,17 +27,11 @@ export async function listCategoryGroups(client: ActualClient): Promise<Category
 export async function resolveCategoryGroupId(client: ActualClient, nameOrId: string): Promise<string> {
   const groups = await listCategoryGroups(client);
 
-  const byId = groups.find(g => g.id === nameOrId);
-  if (byId) return byId.id;
-
-  const lower = nameOrId.toLowerCase();
-  const byName = groups.find(g => g.name.toLowerCase() === lower);
-  if (byName) return byName.id;
-
-  const partial = groups.find(g => g.name.toLowerCase().includes(lower));
-  if (partial) return partial.id;
-
-  throw new Error(`Category group not found: "${nameOrId}". Available: ${groups.map(g => g.name).join(', ')}`);
+  return pickOne(groups, nameOrId, {
+    kind: 'category group',
+    nameOf: g => g.name,
+    notFound: () => new Error(`Category group not found: "${nameOrId}". Available: ${groups.map(g => g.name).join(', ')}`),
+  }).id;
 }
 
 export async function createCategory(
@@ -176,15 +171,10 @@ export async function findCategoryByName(client: ActualClient, name: string): Pr
 export async function resolveCategoryId(client: ActualClient, nameOrId: string): Promise<string> {
   const categories = await listCategories(client);
 
-  const byId = categories.find(c => c.id === nameOrId);
-  if (byId) return byId.id;
-
-  const lower = nameOrId.toLowerCase();
-  const byName = categories.find(c => c.name.toLowerCase() === lower);
-  if (byName) return byName.id;
-
-  const partial = categories.find(c => c.name.toLowerCase().includes(lower));
-  if (partial) return partial.id;
-
-  throw new Error(`Category not found: "${nameOrId}". Available: ${categories.map(c => c.name).join(', ')}`);
+  return pickOne(categories, nameOrId, {
+    kind: 'category',
+    nameOf: c => c.name,
+    describe: c => `${c.name} (id ${c.id}${(c as any).group_id ? `, group ${(c as any).group_id}` : ''})`,
+    notFound: () => new Error(`Category not found: "${nameOrId}". Available: ${categories.map(c => c.name).join(', ')}`),
+  }).id;
 }
