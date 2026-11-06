@@ -10,10 +10,11 @@
  *                                dates ahead, the auto-file switch, …
  *
  * Statement *filing* (reading a PDF, matching rows, adding the missing ones)
- * happens on the phone; so does undo, and so do the PDF passwords, which live
- * only in the phone's Keychain and are never read or written here. The CLI
- * reads the record, and writes only the two switches that are plain note
- * fields: the per-account auto-file switch and "not this one" on a fee.
+ * happens on the phone, and so do the PDF passwords, which live only in the
+ * phone's Keychain and are never read or written here. The CLI reads the
+ * record; writes the two plain note fields (the per-account auto-file switch,
+ * "not this one" on a fee); and undoes the newest filing, the same field
+ * writes the app's undoStatement makes.
  *
  * Every rule that decides a figure is in src/codecs/statement-*.ts, ported
  * near-verbatim. Writes are read-modify-write inside the SafeWriter callback
@@ -38,8 +39,9 @@ import {
 } from '../codecs/statement-checkpoints.js';
 import { cardPaymentDue, learnedDueFor, type CardPaymentDue } from '../codecs/statement-card-payment.js';
 import { cycleFromRecord, missingStatement, projectedDates, type ProjectedDate } from '../codecs/statement-projections.js';
+import { projectCycles, type ProjectedCycle } from '../codecs/statement-cycle-learning.js';
 import { feeLedger, isCardPayment, worthAskingBack, type AskBack, type FeeLedger, type FeeRow } from '../codecs/statement-fees.js';
-import { transactionSig, undoPreview, type UndoPreview } from '../codecs/statement-undo.js';
+import { isUndoneEntry, planUndo, scaleSplit, transactionSig, undoPreview, type UndoPreview } from '../codecs/statement-undo.js';
 import { accountTypeKey } from '../codecs/debt-accounts.js';
 import { parseDebtNote } from '../codecs/debt-tag.js';
 import { addDays, localDay } from '../codecs/debt-cycle.js';
@@ -562,6 +564,203 @@ export async function dismissStatementFee(
   await mutateNote(client, writer, `Dismiss fee suggestion: ${fees.accountName}`, statementsNoteId(accountId), (current) =>
     noteWithFeeDismissed(current, feeId));
   return { accountId, accountName: fees.accountName, feeId, dismissed: true };
+}
+
+// ── The learned cycle (handover: `arc statements cycle`) ────────────────────
+
+export interface StatementCycle {
+  accountId: string;
+  accountName: string;
+  learned: LearnedCycleView | null;
+  /** The next 12 cycles after the newer of today and the newest statement: statement date, due date, and the due date before a weekend moved it. */
+  next: ProjectedCycle[];
+  /** The other dates ahead the statements taught: annual fee, promo end, last loan instalment. */
+  otherDates: ProjectedDate[];
+  learnedFields: string[];
+  fxMarkup: { markup: number; statements: number } | null;
+}
+
+export async function statementCycle(client: ActualClient, accountId: string, now: Date = new Date()): Promise<StatementCycle> {
+  const ctx = await readCtx(client);
+  const account = await accountOf(ctx, accountId);
+  const today = localDay(now);
+  const record = recordOf(ctx, account.id);
+  const newest = record.stmts[record.stmts.length - 1]?.end;
+  const after = newest && newest > today ? newest : today;
+  return {
+    accountId: account.id,
+    accountName: account.name,
+    learned: learnedView(record),
+    next: record.learned ? projectCycles(cycleFromRecord(record.learned), after, 12) : [],
+    otherDates: projectedDates(record, today).filter((d) => d.kind !== 'statement' && d.kind !== 'due'),
+    learnedFields: learnedFields(record),
+    fxMarkup: record.fx ? { markup: record.fx.markup, statements: record.fx.n } : null,
+  };
+}
+
+// ── Undo filing (services/statements/statementFiling.ts undoStatement) ──────
+
+interface UndoRow {
+  id: string;
+  date: string;
+  amount: number;
+  payee: string | null;
+  category: string | null;
+  notes: string | null;
+  account: string;
+  transfer_id: string | null;
+  reconciled: boolean | number | null;
+  is_parent: boolean | number | null;
+}
+
+async function undoRows(client: ActualClient, ids: string[]): Promise<Map<string, UndoRow>> {
+  const out = new Map<string, UndoRow>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const res: any = await client.api.aqlQuery(
+      client.api
+        .q('transactions')
+        .filter({ id: { $oneof: ids.slice(i, i + 200) } })
+        .options({ splits: 'all' })
+        .select(['id', 'date', 'amount', 'payee', 'category', 'notes', 'account', 'transfer_id', 'reconciled', 'is_parent'])
+    );
+    for (const r of (res?.data ?? []) as UndoRow[]) out.set(r.id, r);
+  }
+  return out;
+}
+
+/** Field writes as the app's updateTransactionCRDT: no transfer side effects. */
+async function writeFields(client: ActualClient, updated: Array<Record<string, unknown> & { id: string }>): Promise<void> {
+  if (!updated.length) return;
+  await client.internals.send('transactions-batch-update' as any, { updated, runTransfers: false } as any);
+}
+
+export interface UndoResult {
+  accountId: string;
+  accountName: string;
+  /** The statement taken back (its end date). */
+  end: string;
+  unlocked: number;
+  unlinked: number;
+  removed: number;
+  uncleared: number;
+  restored: number;
+  /** Rows changed since filing, kept as they are (the app's `kept`). */
+  kept: number;
+}
+
+/**
+ * "Undo filing": what is still as filing left it goes back; the rest is kept
+ * and counted. Only the newest statement filed on the account, as the app
+ * offers it ("you can undo a filing until the next statement arrives").
+ * In the app's order: unlock the rows it reconciled, unlink transfers it made
+ * with rows you already had (they get their own payee and category back),
+ * delete the rows it added, take off the cleared marks it set, put foreign
+ * amounts back (a split's lines keep their proportions), then take the
+ * statement off the record. Everything is read after the write's sync.
+ */
+export async function undoStatementFiling(
+  client: ActualClient,
+  writer: SafeWriter,
+  accountId: string,
+  end?: string,
+): Promise<UndoResult> {
+  const ctx = await readCtx(client);
+  const account = await accountOf(ctx, accountId);
+  let out: UndoResult | null = null;
+  const result = await writer.write(`Undo statement filing: ${account.name}`, async () => {
+    const id = statementsNoteId(account.id);
+    const current = await readNote(client, id);
+    const record = parseStatementsRecord(current);
+    const filed = record.stmts.filter((s) => s.src === 'import');
+    const newest = filed[filed.length - 1];
+    if (!newest) throw new Error(`${account.name} has no filed statement to undo.`);
+    if (end && end !== newest.end) {
+      throw new Error(
+        record.stmts.some((s) => s.end === end && s.src === 'import')
+          ? `Only the newest filing can be undone (${newest.end}); the statement of ${end} has a newer one after it.`
+          : `${account.name} has no filed statement ending ${end}. The newest is ${newest.end}.`
+      );
+    }
+    const stmt = newest;
+
+    // undoStatement: fingerprints now, then the partition.
+    const sigIds = Object.keys(stmt.sigs ?? {});
+    const touched = [
+      ...sigIds, ...(stmt.locked ?? []), ...(stmt.cleared ?? []),
+      ...(stmt.linked ?? []).flatMap((l) => [l.id, l.leg]), ...(stmt.added ?? []), ...(stmt.updated ?? []).map((u) => u.id),
+    ];
+    let rows = await undoRows(client, [...new Set(touched)]);
+    const sigsNow: Record<string, string | null> = {};
+    for (const rid of sigIds) {
+      const r = rows.get(rid);
+      sigsNow[rid] = r ? transactionSig(r) : null;
+    }
+    const plan = planUndo(stmt, stmt.sigs ? sigsNow : null);
+
+    // setReconciled(locked, false)
+    const unlock = plan.unlock.filter((rid) => rows.has(rid));
+    await writeFields(client, unlock.map((rid) => ({ id: rid, reconciled: false })));
+
+    // unlinkTransfers: a leg linked to something else since was changed by the user; leave it.
+    const unlink = plan.unlink.filter((l) => rows.get(l.leg)?.transfer_id === l.id);
+    await writeFields(client, unlink.flatMap((l) => [
+      { id: l.leg, transfer_id: null, payee: l.payee, category: l.cat },
+      { id: l.id, transfer_id: null },
+    ]));
+
+    // removeRows: deleted as Actual deletes (a split with its lines, a transfer with its other leg).
+    const remove = plan.remove.filter((rid) => rows.has(rid));
+    for (const rid of remove) await client.api.deleteTransaction(rid);
+
+    // setCleared(cleared, false): a row locked since keeps its state; a transfer's other leg follows.
+    rows = await undoRows(client, [...new Set([...plan.unclear, ...plan.restore.map((u) => u.id)])]);
+    const unclear = plan.unclear.filter((rid) => rows.has(rid) && !rows.get(rid)!.reconciled);
+    await writeFields(client, unclear.flatMap((rid) => {
+      const leg = rows.get(rid)!.transfer_id;
+      return [{ id: rid, cleared: false }, ...(leg ? [{ id: leg, cleared: false }] : [])];
+    }));
+
+    // updateAmounts: the amount and note before; a split's lines scaled to the old total.
+    let restored = 0;
+    for (const u of plan.restore) {
+      const row = rows.get(u.id);
+      if (!row || row.reconciled) continue;
+      const updates: Array<Record<string, unknown> & { id: string }> = [
+        { id: u.id, amount: u.from, ...(u.note !== undefined ? { notes: u.note } : {}) },
+      ];
+      if (row.is_parent) {
+        const res: any = await client.api.aqlQuery(
+          client.api.q('transactions').filter({ parent_id: u.id }).options({ splits: 'all' }).select(['id', 'amount'])
+        );
+        const lines = ((res?.data ?? []) as Array<{ id: string; amount: number }>).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        const scaled = scaleSplit(lines.map((l) => l.amount), u.from);
+        lines.forEach((l, i) => { if (scaled[i] !== l.amount) updates.push({ id: l.id, amount: scaled[i] }); });
+      }
+      await writeFields(client, updates);
+      restored++;
+    }
+
+    // removeStatement: the entry goes; every other field of the record stays as it is.
+    const next = patchStatementsNote(current, (fields) => {
+      const list = Array.isArray(fields.stmts) ? (fields.stmts as Array<Record<string, unknown>>) : [];
+      fields.stmts = list.filter((s) => !isUndoneEntry(s, stmt.end, stmt.doc));
+    });
+    if (next !== (current ?? '')) await client.internals.send('notes-save' as any, { id, note: next } as any);
+
+    out = {
+      accountId: account.id,
+      accountName: account.name,
+      end: stmt.end,
+      unlocked: unlock.length,
+      unlinked: unlink.length,
+      removed: remove.length,
+      uncleared: unclear.length,
+      restored,
+      kept: plan.kept.length,
+    };
+  });
+  if (!result.success) throw new Error(result.error);
+  return out!;
 }
 
 /** For tests and the parity record: the raw note, read the way the writes read it. */

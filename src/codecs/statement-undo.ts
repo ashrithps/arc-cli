@@ -1,13 +1,15 @@
 // Ported from the arc app (budgetarc 1.0.50): `rowSig` verbatim from
-// services/statements/budgetFilingStore.ts, and the partition at the top of
-// `undoStatement` (services/statements/statementFiling.ts).
+// services/statements/budgetFilingStore.ts, `scaleSplit` verbatim from
+// utils/statementFx.ts, and the partition at the top of `undoStatement`
+// (services/statements/statementFiling.ts), so the preview in
+// `statements show` and `statements undo` decide alike.
 //
-// Read only. The CLI does not undo a filing: undo deletes the rows a statement
-// added, unlocks and un-clears rows, unlinks transfers and puts foreign
-// amounts back, and the app does that through CRDT writes that bypass Actual's
-// own transfer handling (CLI_PARITY.md, "Statements"). What this gives is what
-// "Undo filing" on the phone would take back right now, and what it would keep
-// because it was changed since.
+// The writes themselves live in src/operations/statements.ts. The app does
+// them as raw CRDT field writes; the CLI sends the same fields through
+// Actual's `transactions-batch-update` with `runTransfers: false`, which
+// writes them without Actual's transfer side effects (a plain
+// `updateTransaction` would delete the leg the user already had when its
+// transfer is unlinked).
 import type { StatementCheckpoint } from './statement-checkpoints.js';
 
 /** A short fingerprint of a row's content (FNV-1a, base36): equal when nothing was edited. */
@@ -32,6 +34,54 @@ export function transactionSig(row: {
   return rowSig([row.amount, row.date, row.payee, row.category, row.notes, row.account]);
 }
 
+/** Scale a split's lines to a new total, keeping their proportions; the last line takes the rounding. */
+export function scaleSplit(lines: number[], newTotal: number): number[] {
+  const total = lines.reduce((a, b) => a + b, 0);
+  if (!total) return lines;
+  const out = lines.map((l) => Math.round((l * newTotal) / total));
+  out[out.length - 1] += newTotal - out.reduce((a, b) => a + b, 0);
+  return out;
+}
+
+/** What undoStatement does, in its order: unlock, unlink, remove, un-clear, restore. */
+export interface UndoPlan {
+  unlock: string[];
+  unlink: NonNullable<StatementCheckpoint['linked']>;
+  remove: string[];
+  unclear: string[];
+  restore: NonNullable<StatementCheckpoint['updated']>;
+  /** Rows changed since filing: kept as they are. */
+  kept: string[];
+  /** Rows written by the filing that are gone since. */
+  gone: string[];
+}
+
+/**
+ * The partition at the top of `undoStatement`, given each written row's
+ * fingerprint now (null when the row is gone). As the app: without stored
+ * fingerprints nothing counts as changed.
+ */
+export function planUndo(stmt: StatementCheckpoint, now: Record<string, string | null> | null): UndoPlan {
+  const changed = new Set<string>();
+  const gone = new Set<string>();
+  if (stmt.sigs && now) {
+    for (const [id, sig] of Object.entries(stmt.sigs)) {
+      if (now[id] === null || now[id] === undefined) gone.add(id);
+      else if (now[id] !== sig) changed.add(id);
+    }
+  }
+  const untouched = (id: string) => !changed.has(id) && !gone.has(id);
+  return {
+    unlock: stmt.locked ?? [],
+    unlink: (stmt.linked ?? []).filter((l) => untouched(l.id)),
+    remove: (stmt.added ?? []).filter(untouched),
+    unclear: stmt.cleared ?? [],
+    restore: (stmt.updated ?? []).filter((u) => untouched(u.id)),
+    kept: [...changed],
+    gone: [...gone],
+  };
+}
+
 export interface UndoPreview {
   /** Rows the statement locked as reconciled: undo unlocks them. */
   unlock: number;
@@ -49,28 +99,20 @@ export interface UndoPreview {
   gone: number;
 }
 
-/**
- * What `undoStatement` would do with this checkpoint, given each written
- * row's fingerprint now (null when the row is gone). As the app: without
- * stored fingerprints nothing counts as changed.
- */
 export function undoPreview(stmt: StatementCheckpoint, now: Record<string, string | null> | null): UndoPreview {
-  const changed = new Set<string>();
-  const gone = new Set<string>();
-  if (stmt.sigs && now) {
-    for (const [id, sig] of Object.entries(stmt.sigs)) {
-      if (now[id] === null || now[id] === undefined) gone.add(id);
-      else if (now[id] !== sig) changed.add(id);
-    }
-  }
-  const untouched = (id: string) => !changed.has(id) && !gone.has(id);
+  const p = planUndo(stmt, now);
   return {
-    unlock: stmt.locked?.length ?? 0,
-    unlink: (stmt.linked ?? []).filter((l) => untouched(l.id)).length,
-    remove: (stmt.added ?? []).filter(untouched).length,
-    unclear: stmt.cleared?.length ?? 0,
-    restore: (stmt.updated ?? []).filter((u) => untouched(u.id)).length,
-    kept: changed.size,
-    gone: gone.size,
+    unlock: p.unlock.length,
+    unlink: p.unlink.length,
+    remove: p.remove.length,
+    unclear: p.unclear.length,
+    restore: p.restore.length,
+    kept: p.kept.length,
+    gone: p.gone.length,
   };
+}
+
+/** removeStatement's predicate: the entry undo takes off the record. */
+export function isUndoneEntry(s: { end?: unknown; doc?: unknown }, end: string, doc?: string): boolean {
+  return s.end === end && (!doc || !s.doc || s.doc === doc);
 }

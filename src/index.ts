@@ -1484,6 +1484,16 @@ async function handleStatements(
       if (isJson(flags)) return printJson(detail);
       return ui.printStatementDetail(detail);
     }
+    case 'cycle': {
+      const res = await statements.statementCycle(client, await accountId());
+      if (isJson(flags)) return printJson(res);
+      return ui.printStatementCycle(res);
+    }
+    case 'undo': {
+      const res = await statements.undoStatementFiling(client, writer, await accountId(), flags.end);
+      if (isJson(flags)) return printJson(res);
+      return ui.printStatementUndo(res);
+    }
     case 'fees': {
       const ref = flags.account ?? flags.id;
       const fees = await statements.statementFees(client, ref ? await accounts.resolveAccountId(client, ref) : undefined);
@@ -1509,7 +1519,7 @@ async function handleStatements(
       return;
     }
     default:
-      throw new Error(`Unknown statements subcommand: ${sub}. Use: list, show, fees, auto-file, dismiss-fee`);
+      throw new Error(`Unknown statements subcommand: ${sub}. Use: list, show, cycle, fees, auto-file, dismiss-fee, undo`);
   }
 }
 

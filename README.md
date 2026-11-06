@@ -100,7 +100,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 119 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 121 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -844,7 +844,7 @@ Credit cards, loans and BNPL plans as the arc app (1.0.49+) follows them: each a
 
 ## Statements
 
-The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement, undoing one and statement passwords stay on the phone; from here you can switch auto-filing per account and dismiss a fee suggestion. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).
+The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement and statement passwords stay on the phone; from here you can switch auto-filing per account, dismiss a fee suggestion, and undo the newest filing exactly as the phone does. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).
 
 - **`arc statements list`** — Every account the arc app keeps statements for: how many are filed, the newest one's end date and closing balance and whether it matched the bank's balance (or by how much it was off), whether statements file on their own, the statement and due days learned from them, a statement that should have arrived and hasn't, and for a card the payment due on its newest statement (what it asked, what's left after payments since, the due date, whether the grace period was lost, and the account it was paid from last time). Payments due first. _Approval: runs._
 
@@ -856,6 +856,12 @@ The statements the arc app (1.0.50+) files for each account: their figures, whet
 
   ```bash
   arc statements show --account 'HDFC Card'
+  ```
+
+- **`arc statements cycle`** — The card's cycle as arc learned it from its statements: the statement day, how the due date follows it (a day of the month, or a number of days after the statement) and what the bank does when that lands on a weekend. Then the next 12 cycles (statement date, due date, and the due date before a weekend moved it), the annual fee, promo end and last loan instalment it learned, the card fields it filled in, and the card's usual markup on foreign purchases. Empty until two statements agree. _Approval: runs._
+
+  ```bash
+  arc statements cycle --account 'HDFC Card'
   ```
 
 - **`arc statements fees`** — Fees from the last 12 months, summed from the account's own rows (tax on them apart), and the late fees worth asking the bank to take back: in India a late fee charged when the payment arrived 1-3 days after the due date (RBI), and anywhere the first late fee in a year on a card paid in full since. A fee the bank already reversed, or one you dismissed, is left out. Only accounts with a statement filed; a card's or loan's 12-month total is in `arc debts show`. Omit the account for every account. _Approval: runs._
@@ -874,6 +880,12 @@ The statements the arc app (1.0.50+) files for each account: their figures, whet
 
   ```bash
   arc statements dismiss-fee --account 'HDFC Card' --fee <transaction-id>
+  ```
+
+- **`arc statements undo`** — "Undo filing" for the newest statement filed on an account, as the phone does it: unlocks the rows it reconciled, unlinks transfers it made with rows you already had (they get their own payee and category back), deletes the rows it added, takes off the cleared marks it set, puts foreign purchases back to the amount before, then takes the statement off the record. Rows you changed since filing are kept and counted. Only the newest filing: an older one has a newer statement after it. Check first with `arc statements show` (its `undo` preview). _Approval: asks · destructive._
+
+  ```bash
+  arc statements undo --account 'HDFC Card'
   ```
 
 ## Group Splits

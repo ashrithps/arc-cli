@@ -79,6 +79,7 @@ const WRITE_ENUMS: Record<string, string> = {
   'debts.clear': 'clear:debt',
   'statements.auto-file': 'switch:statement-filing',
   'statements.dismiss-fee': 'dismiss:fee-suggestion',
+  'statements.undo': 'undo:statement-filing',
   'accounts.reconcile': 'reconcile:account',
   'reconcile.apply': 'apply:bank-statement',
 };

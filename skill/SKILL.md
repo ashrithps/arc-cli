@@ -223,10 +223,15 @@ due days learned from them, and the dates ahead.
   phone would take back and what it would keep because it changed since.
 - `arc statements fees` sums the last 12 months' fees from the account's own
   rows and lists the late fees worth asking the bank to take back.
-- `arc statements auto-file --on|--off` and `arc statements dismiss-fee` are the
-  only writes: plain fields of the record, every other field kept.
-- Filing a statement, undoing one, linked senders and statement passwords stay
-  on the phone. Passwords live only in its Keychain; arc never reads them.
+- `arc statements cycle` is the learned statement and due days and the next
+  12 cycles.
+- `arc statements auto-file --on|--off` and `arc statements dismiss-fee` change
+  plain fields of the record, every other field kept.
+- `arc statements undo` is the phone's "Undo filing" for the newest statement:
+  rows it added go, rows it locked, cleared or linked go back, and rows changed
+  since are kept. Read `statements show` (its `undo` preview) first.
+- Filing a statement, linked senders and statement passwords stay on the
+  phone. Passwords live only in its Keychain; arc never reads them.
 
 ### Refunds
 
@@ -1608,7 +1613,7 @@ arc debts plan --extra 200 --method avalanche --json
 
 ## Statements
 
-The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement, undoing one and statement passwords stay on the phone; from here you can switch auto-filing per account and dismiss a fee suggestion. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).
+The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement and statement passwords stay on the phone; from here you can switch auto-filing per account, dismiss a fee suggestion, and undo the newest filing exactly as the phone does. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).
 
 ### `arc statements list`
 
@@ -1632,6 +1637,18 @@ arc statements list --json
 ```bash
 arc statements show --account 'HDFC Card'
 arc statements show --account 'Savings' --json
+```
+
+### `arc statements cycle`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_statements_cycle`
+- The card's cycle as arc learned it from its statements: the statement day, how the due date follows it (a day of the month, or a number of days after the statement) and what the bank does when that lands on a weekend. Then the next 12 cycles (statement date, due date, and the due date before a weekend moved it), the annual fee, promo end and last loan instalment it learned, the card fields it filled in, and the card's usual markup on foreign purchases. Empty until two statements agree.
+
+```bash
+arc statements cycle --account 'HDFC Card'
+arc statements cycle --account 'HDFC Card' --json
 ```
 
 ### `arc statements fees`
@@ -1667,6 +1684,18 @@ arc statements auto-file --account 'HDFC Card' --on
 
 ```bash
 arc statements dismiss-fee --account 'HDFC Card' --fee <transaction-id>
+```
+
+### `arc statements undo`
+
+- mode: **write**
+- risk: **destructive** · approval under Standard: **asks · destructive**
+- mcp tool: `arc_statements_undo`
+- "Undo filing" for the newest statement filed on an account, as the phone does it: unlocks the rows it reconciled, unlinks transfers it made with rows you already had (they get their own payee and category back), deletes the rows it added, takes off the cleared marks it set, puts foreign purchases back to the amount before, then takes the statement off the record. Rows you changed since filing are kept and counted. Only the newest filing: an older one has a newer statement after it. Check first with `arc statements show` (its `undo` preview).
+
+```bash
+arc statements undo --account 'HDFC Card'
+arc statements undo --account 'HDFC Card' --end 2026-10-25 --json
 ```
 
 ## Group Splits

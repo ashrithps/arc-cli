@@ -1723,6 +1723,19 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     defaultExposure: "default",
   },
   {
+    id: "statements.cycle",
+    group: "statements",
+    subcommand: "cycle",
+    mcpTool: "arc_statements_cycle",
+    mode: "read",
+    risk: "read",
+    description:
+      "The card's cycle as arc learned it from its statements: the statement day, how the due date follows it (a day of the month, or a number of days after the statement) and what the bank does when that lands on a weekend. Then the next 12 cycles (statement date, due date, and the due date before a weekend moved it), the annual fee, promo end and last loan instalment it learned, the card fields it filled in, and the card's usual markup on foreign purchases. Empty until two statements agree.",
+    examples: ["arc statements cycle --account 'HDFC Card'", "arc statements cycle --account 'HDFC Card' --json"],
+    inputSchema: { account: accountRef, json: jsonFlag },
+    defaultExposure: "default",
+  },
+  {
     id: "statements.fees",
     group: "statements",
     subcommand: "fees",
@@ -1765,6 +1778,24 @@ export const PUBLIC_OPERATIONS: readonly PublicOperation[] = [
     inputSchema: {
       account: accountRef,
       fee: z.string().describe("The fee's transaction id, as `arc statements fees` gives it (feeId)."),
+      json: jsonFlag,
+    },
+    defaultExposure: "default",
+  },
+
+  {
+    id: "statements.undo",
+    group: "statements",
+    subcommand: "undo",
+    mcpTool: "arc_statements_undo",
+    mode: "write",
+    risk: "destructive",
+    description:
+      "\"Undo filing\" for the newest statement filed on an account, as the phone does it: unlocks the rows it reconciled, unlinks transfers it made with rows you already had (they get their own payee and category back), deletes the rows it added, takes off the cleared marks it set, puts foreign purchases back to the amount before, then takes the statement off the record. Rows you changed since filing are kept and counted. Only the newest filing: an older one has a newer statement after it. Check first with `arc statements show` (its `undo` preview).",
+    examples: ["arc statements undo --account 'HDFC Card'", "arc statements undo --account 'HDFC Card' --end 2026-10-25 --json"],
+    inputSchema: {
+      account: accountRef,
+      end: dateStr.optional().describe("The statement's end date, to be sure it is the one undone. Default: the newest filed."),
       json: jsonFlag,
     },
     defaultExposure: "default",

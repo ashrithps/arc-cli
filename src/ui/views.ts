@@ -849,6 +849,36 @@ function printFeesBody(f: any) {
   }
 }
 
+export function printStatementCycle(c: any) {
+  console.log(header(`Cycle · ${c.accountName}`));
+  console.log(row('Learned', learnedText(c.learned)));
+  if (c.learnedFields?.length) console.log(row('Filled on the card', c.learnedFields.join(', ')));
+  if (c.fxMarkup) console.log(row('Foreign markup', `${(c.fxMarkup.markup * 100).toFixed(1)}% (from ${c.fxMarkup.statements} statements)`));
+  if (c.next.length) {
+    printTable(c.next.map((p: any) => ({
+      statement: p.stmt,
+      due: p.due ?? colors.muted('—'),
+      moved: p.dueBeforeShift ? colors.muted(`from ${p.dueBeforeShift}`) : '',
+    })));
+  }
+  const label: Record<string, string> = { annual_fee: 'annual fee', promo_end: 'promo ends', loan_end: 'last instalment' };
+  for (const d of c.otherDates ?? []) console.log(row(d.date, label[d.kind] ?? d.kind));
+  console.log('');
+}
+
+export function printStatementUndo(r: any) {
+  console.log(`${r.accountName}: the statement of ${r.end} is no longer filed.`);
+  const parts = [
+    r.removed ? `${r.removed} added rows deleted` : null,
+    r.unlocked ? `${r.unlocked} unlocked` : null,
+    r.unlinked ? `${r.unlinked} transfers unlinked` : null,
+    r.uncleared ? `${r.uncleared} cleared marks taken off` : null,
+    r.restored ? `${r.restored} amounts put back` : null,
+  ].filter(Boolean);
+  if (parts.length) console.log(`  ${parts.join(' · ')}`);
+  if (r.kept) console.log(`  ${colors.warning(`${r.kept} rows you changed since were kept as they are.`)}`);
+}
+
 export function printStatementFees(list: any[]) {
   console.log(header('Fees'));
   if (list.length === 0) {

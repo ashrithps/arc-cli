@@ -749,6 +749,10 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   arc_statements_list: async ({ client }) => statementOps.listStatements(client),
   arc_statements_show: async ({ client }, { account }) =>
     statementOps.showStatements(client, await accountOps.resolveAccountId(client, account)),
+  arc_statements_cycle: async ({ client }, { account }) =>
+    statementOps.statementCycle(client, await accountOps.resolveAccountId(client, account)),
+  arc_statements_undo: async ({ client, writer }, { account, end }) =>
+    statementOps.undoStatementFiling(client, writer, await accountOps.resolveAccountId(client, account), end),
   arc_statements_fees: async ({ client }, { account }) =>
     statementOps.statementFees(client, account ? await accountOps.resolveAccountId(client, account) : undefined),
   arc_statements_auto_file: async ({ client, writer }, { account, auto }) =>

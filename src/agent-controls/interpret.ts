@@ -162,6 +162,8 @@ const OP_PHRASES: Record<string, Phrase> = {
   'statements.list': ['read statements', 'read statements'],
   'statements.show': ['read an account\'s statements', 'read an account\'s statements'],
   'statements.fees': ['read fees', 'read fees'],
+  'statements.cycle': ['read a card\'s learned cycle', 'read a card\'s learned cycle'],
+  'statements.undo': ['undo a statement filing', 'undid a statement filing'],
   'statements.auto-file': ['switch statement filing', 'switched statement filing'],
   'statements.dismiss-fee': ['dismiss a fee suggestion', 'dismissed a fee suggestion'],
   'portfolio.realized': ['read realized gains', 'read realized gains'],
