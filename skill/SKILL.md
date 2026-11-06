@@ -151,7 +151,7 @@ Two things follow:
 `arc wake` is the command-line spelling, and `arc server wake` is the same
 thing.
 
-## Note-Backed Features (goals, debts, splits, refunds, portfolio)
+## Note-Backed Features (goals, debts, statements, splits, refunds, portfolio)
 
 Several arc features do not live in their own Actual tables. They are stored as
 structured tokens inside **note bodies** — account notes, transaction notes — so
@@ -207,6 +207,26 @@ too; any other account below zero is *overdrawn*, never debt.
   own currency; owed and totals are in the budget's.
 - `arc debts plan` is the app's "Pay here first": avalanche needs every debt's
   rate, snowball works without them.
+- A card with no due day typed takes its cycle from its statements (arc
+  1.0.50): `cycleLearned` says so, and nothing is written to the tag.
+
+### Statements
+
+The arc app (1.0.50+) files the card and bank statements forwarded to the
+Receipt Inbox, on the phone, and keeps a record per account in an
+`arc-statements:<account>` note: each statement's figures, whether its balance
+matched the bank's, what the filing wrote (the undo journal), the statement and
+due days learned from them, and the dates ahead.
+
+- `arc statements list` / `show` read that record: reconciled or off by how
+  much, the payment due on a card's newest statement, what "Undo filing" on the
+  phone would take back and what it would keep because it changed since.
+- `arc statements fees` sums the last 12 months' fees from the account's own
+  rows and lists the late fees worth asking the bank to take back.
+- `arc statements auto-file --on|--off` and `arc statements dismiss-fee` are the
+  only writes: plain fields of the record, every other field kept.
+- Filing a statement, undoing one, linked senders and statement passwords stay
+  on the phone. Passwords live only in its Keychain; arc never reads them.
 
 ### Refunds
 
@@ -1584,6 +1604,69 @@ arc debts payoff --account 'Car loan' --extra 100 --lump 2000
 ```bash
 arc debts plan
 arc debts plan --extra 200 --method avalanche --json
+```
+
+## Statements
+
+The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement, undoing one and statement passwords stay on the phone; from here you can switch auto-filing per account and dismiss a fee suggestion. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).
+
+### `arc statements list`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_statements_list`
+- Every account the arc app keeps statements for: how many are filed, the newest one's end date and closing balance and whether it matched the bank's balance (or by how much it was off), whether statements file on their own, the statement and due days learned from them, a statement that should have arrived and hasn't, and for a card the payment due on its newest statement (what it asked, what's left after payments since, the due date, whether the grace period was lost, and the account it was paid from last time). Payments due first.
+
+```bash
+arc statements list
+arc statements list --json
+```
+
+### `arc statements show`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_statements_show`
+- One account's statements in full: each statement's period, opening and closing balance, interest and fees, where it came from (filed, typed, read from a text), whether it reconciled with the bank and by how much it was off, and its undo journal (rows it added, cleared, locked, updated or linked, and what Undo filing on the phone would take back or keep because it changed since). Also the cycle learned from them, the next 12 statement and due dates with the annual fee, promo end and last loan instalment, the card fields arc filled in, the foreign-purchase markup, a loan's next instalments, the payment due, and the fees of the last 12 months.
+
+```bash
+arc statements show --account 'HDFC Card'
+arc statements show --account 'Savings' --json
+```
+
+### `arc statements fees`
+
+- mode: **read**
+- risk: **read** · approval under Standard: **runs**
+- mcp tool: `arc_statements_fees`
+- Fees from the last 12 months, summed from the account's own rows (tax on them apart), and the late fees worth asking the bank to take back: in India a late fee charged when the payment arrived 1-3 days after the due date (RBI), and anywhere the first late fee in a year on a card paid in full since. A fee the bank already reversed, or one you dismissed, is left out. Only accounts with a statement filed; a card's or loan's 12-month total is in `arc debts show`. Omit the account for every account.
+
+```bash
+arc statements fees
+arc statements fees --account 'HDFC Card' --json
+```
+
+### `arc statements auto-file`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_statements_auto_file`
+- Turn statement filing on or off for one account (Settings › Statements on the phone). On, a statement that adds up files itself with no tap; off, it waits on the phone for a look. The switch lives in the budget, so every phone on it follows. Changes nothing else: no rows, no statements.
+
+```bash
+arc statements auto-file --account 'HDFC Card' --off
+arc statements auto-file --account 'HDFC Card' --on
+```
+
+### `arc statements dismiss-fee`
+
+- mode: **write**
+- risk: **write** · approval under Standard: **asks**
+- mcp tool: `arc_statements_dismiss_fee`
+- "Not this one": stop suggesting that a late fee is worth asking the bank to take back, on every phone. Only a fee `arc statements fees` suggests now can be dismissed; the fee row itself is not touched.
+
+```bash
+arc statements dismiss-fee --account 'HDFC Card' --fee <transaction-id>
 ```
 
 ## Group Splits

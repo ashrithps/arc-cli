@@ -9,6 +9,10 @@ const NOISY_PREFIXES = [
   'Merkle hash in db:',
   'Performing transaction reconciliation',
   'Debug data for the operations:',
+  // @actual-app/api 26.11 signs out on shutdown and says so on stdout when the
+  // server has no /account/logout (Actual before 26.11). After `--json` output
+  // it made the JSON unreadable; the session is dropped locally either way.
+  'Could not revoke the server session',
 ];
 
 const NOISY_CONTAINS = [

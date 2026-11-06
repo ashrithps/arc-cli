@@ -312,6 +312,7 @@ export function printHelp() {
   console.log(cmd('portfolio', 'Holdings, trades, realized P/L, dividends, value history (read-only)'));
   console.log(cmd('goals', 'Savings goals — progress, contributions, deadlines'));
   console.log(cmd('debts', 'Cards, loans and BNPL — cycle state, statements, payoff, Pay here first'));
+  console.log(cmd('statements', 'Statements arc filed: figures, reconciled, undo journal, payment due, fees'));
   console.log(cmd('splits', 'Group splits — share a cost, track who owes you'));
   console.log(cmd('reconcile', 'Check a bank statement against an account; apply it'));
   console.log(cmd('backup', 'List/clean backups'));
@@ -718,7 +719,7 @@ export function printDebtDetail(d: any) {
   const c = d.cycle;
   if (c) {
     console.log(subheader('This cycle'));
-    console.log(row('Due', c.dueDate ?? colors.muted('—')));
+    console.log(row('Due', `${c.dueDate ?? colors.muted('—')}${d.cycleLearned ? colors.muted(' (from its statements)') : ''}`));
     if (c.statementDate) console.log(row('Statement', c.statementDate));
     console.log(row('State', debtStateText(c.state, c.daysPastDue)));
     console.log(row('Amount due', `${money(c.amountDue, cur)}${c.amountDueSource ? colors.muted(` (${c.amountDueSource})`) : ''}`));
@@ -754,6 +755,110 @@ export function printDebtDetail(d: any) {
   if (d.instalmentSplit) console.log(row('Interest in last instalment', `${money(d.instalmentSplit.interest, cur)} of ${money(d.instalmentSplit.payment, cur)} (${d.instalmentSplit.date}), not entered yet`));
   if (d.payFrom) console.log(row('Pay from', d.payFrom.accountName));
   if (d.milestones?.length) console.log(row('Milestones', d.milestones.join(', ')));
+  console.log('');
+}
+
+// ── Statements (arc 1.0.50) ──────────────────────────────────
+
+function learnedText(l: any): string {
+  if (!l) return colors.muted('not learned yet (needs two statements)');
+  const due = !l.due ? 'due day not learned' : l.due.kind === 'day' ? `due on the ${l.due.day}` : `due ${l.due.days} days after`;
+  const wk = l.weekend === 'next_business_day' ? ', moved to Monday off a weekend' : l.weekend === 'previous_business_day' ? ', moved to Friday off a weekend' : '';
+  return `statement on the ${l.statementDay}, ${due}${wk}`;
+}
+
+function reconciledText(state: string | null | undefined, diff?: number | null, cur?: string | null): string {
+  if (state === 'matches') return colors.success('matches the bank ✓');
+  if (state === 'off') return colors.warning(`off by ${money(Math.abs(diff ?? 0), cur)}`);
+  return colors.muted('—');
+}
+
+function paymentDueText(p: any): string {
+  const left = p.left !== p.owed ? colors.muted(` (the statement asked ${money(p.owed, p.currency)}; ${money(p.owed - p.left, p.currency)} paid since)`) : '';
+  const grace = p.graceLostFrom ? colors.warning(' · interest runs on new purchases too') : '';
+  return `${money(p.left, p.currency)} by ${p.due}${left}${grace}`;
+}
+
+export function printStatementAccounts(list: any[]) {
+  console.log(header(`Statements (${list.length})`));
+  if (list.length === 0) {
+    console.log(`  ${colors.muted('No statements filed yet. Forward a card or bank statement to your Receipt Inbox and arc files it on your phone.')}\n`);
+    return;
+  }
+  printTable(list.map((a: any) => ({
+    account: a.closed ? `${a.accountName} ${colors.muted('(closed)')}` : a.accountName,
+    kind: a.kind,
+    filed: String(a.statements),
+    newest: a.newest?.end ?? colors.muted('—'),
+    closing: money(a.newest?.closing, a.newest?.currency),
+    bank: reconciledText(a.newest?.reconciled, a.newest?.offBy, a.newest?.currency),
+    auto: a.autoFile ? 'on' : colors.warning('off'),
+    'pay by': a.paymentDue ? `${money(a.paymentDue.left, a.paymentDue.currency)} · ${a.paymentDue.due}` : colors.muted('—'),
+  })));
+  for (const a of list) {
+    if (a.missing) console.log(row(a.accountName, colors.warning(`the statement of ${a.missing} hasn't arrived`)));
+  }
+  console.log('');
+}
+
+export function printStatementDetail(d: any) {
+  console.log(header(`Statements · ${d.accountName} · ${d.kind}`));
+  console.log(row('Files on its own', d.autoFile ? 'yes' : colors.warning('no: statements wait for a look')));
+  console.log(row('Cycle', learnedText(d.learned)));
+  if (d.learnedFields?.length) console.log(row('Learned on the card', d.learnedFields.join(', ')));
+  if (d.paymentDue) {
+    console.log(row('Pay', paymentDueText(d.paymentDue)));
+    if (d.paymentDue.payFrom) console.log(row('Paid from last time', d.paymentDue.payFrom.name));
+  }
+  if (d.missing) console.log(row('Missing', colors.warning(`the statement of ${d.missing} hasn't arrived`)));
+  if (d.fxMarkup) console.log(row('Foreign markup', `${(d.fxMarkup.markup * 100).toFixed(1)}% (from ${d.fxMarkup.statements} statements)`));
+  if (d.statementsList.length) {
+    console.log(subheader('Filed'));
+    printTable([...d.statementsList].reverse().map((s: any) => ({
+      period: `${s.start ?? '…'} → ${s.end}`,
+      source: s.source === 'import' ? 'filed' : s.source,
+      opening: money(s.opening, s.currency),
+      closing: money(s.closing, s.currency),
+      bank: reconciledText(s.reconciled?.state, s.reconciled?.diff, s.currency),
+      rows: s.source === 'import' ? `+${s.rows.added} ✓${s.rows.cleared} 🔒${s.rows.locked}${s.rows.updated ? ` fx${s.rows.updated}` : ''}${s.rows.linked ? ` ⇄${s.rows.linked}` : ''}` : colors.muted('—'),
+      'undo keeps': s.undo ? String(s.undo.kept) : colors.muted('—'),
+    })));
+  } else {
+    console.log(`  ${colors.muted('No statements filed.')}`);
+  }
+  if (d.projected?.length) {
+    console.log(subheader('Ahead'));
+    const label: Record<string, string> = { statement: 'statement', due: 'due', annual_fee: 'annual fee', promo_end: 'promo ends', loan_end: 'last instalment' };
+    for (const p of d.projected.slice(0, 8)) console.log(row(p.date, label[p.kind] ?? p.kind));
+  }
+  if (d.loanSchedule?.length) {
+    const next = d.loanSchedule[0];
+    console.log(row('Next instalment', `${next.date}: ${formatCurrency(next.principal)} principal, ${formatCurrency(next.interest)} interest`));
+  }
+  if (d.fees) printFeesBody(d.fees);
+  console.log('');
+}
+
+function printFeesBody(f: any) {
+  if (f.ledger) console.log(row('Fees, 12 months', `${money(f.ledger.total, f.currency)} · ${f.ledger.count} charges${f.ledger.tax ? ` · ${money(f.ledger.tax, f.currency)} of it tax` : ''}`));
+  for (const a of f.asks) {
+    const why = a.why === 'grace'
+      ? `paid ${a.daysLate} day${a.daysLate === 1 ? '' : 's'} after ${a.due}: inside the bank's 3 days`
+      : 'your first late fee in a year, and the card is paid in full since';
+    console.log(row(`Ask back ${a.date}`, `${money(a.amount, f.currency)} ${colors.muted(a.text)} · ${why} ${colors.muted(`(${a.feeId})`)}`));
+  }
+}
+
+export function printStatementFees(list: any[]) {
+  console.log(header('Fees'));
+  if (list.length === 0) {
+    console.log(`  ${colors.muted('No fees to show: none in the last 12 months on accounts with a statement filed, and none worth asking back.')}\n`);
+    return;
+  }
+  for (const f of list) {
+    console.log(subheader(f.accountName));
+    printFeesBody(f);
+  }
   console.log('');
 }
 

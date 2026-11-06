@@ -77,6 +77,8 @@ const WRITE_ENUMS: Record<string, string> = {
   'debts.record': 'record:debt-statement',
   'debts.mark-paid': 'mark:debt-cycle-paid',
   'debts.clear': 'clear:debt',
+  'statements.auto-file': 'switch:statement-filing',
+  'statements.dismiss-fee': 'dismiss:fee-suggestion',
   'accounts.reconcile': 'reconcile:account',
   'reconcile.apply': 'apply:bank-statement',
 };
@@ -95,6 +97,7 @@ const READ_NOUNS: Record<string, string> = {
   goals: 'goals',
   splits: 'splits',
   debts: 'debts',
+  statements: 'statements',
   reconcile: 'statements',
   server: 'server',
   agent: 'permissions',

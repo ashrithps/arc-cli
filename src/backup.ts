@@ -3,6 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ActualClient } from './client.js';
 
+// Every line here goes to stderr. Backups run before the first write of a
+// session, which over `arc mcp` (stdio) is in the middle of a JSON-RPC
+// exchange: a line on stdout there corrupts the protocol stream, and under
+// `--json` it corrupts the JSON a script reads.
+
 export class BackupManager {
   private backupDir: string;
   private sessionBackupPath: string | null = null;
@@ -45,7 +50,7 @@ export class BackupManager {
         this.sessionBackupPath = tarFile;
         client.markBackedUp();
         const stat = fs.statSync(tarFile);
-        console.log(`[Backup] Created: ${tarFile} (${(stat.size / 1024).toFixed(1)} KB)`);
+        console.error(`[Backup] Created: ${tarFile} (${(stat.size / 1024).toFixed(1)} KB)`);
         return tarFile;
       } catch {
         throw new Error(`Failed to create backup. Neither zip nor tar available.`);
@@ -60,7 +65,7 @@ export class BackupManager {
 
     this.sessionBackupPath = backupFile;
     client.markBackedUp();
-    console.log(`[Backup] Created: ${backupFile} (${(stat.size / 1024).toFixed(1)} KB)`);
+    console.error(`[Backup] Created: ${backupFile} (${(stat.size / 1024).toFixed(1)} KB)`);
     return backupFile;
   }
 
@@ -86,7 +91,7 @@ export class BackupManager {
       fs.unlinkSync(path.join(this.backupDir, file));
     }
 
-    console.log(`[Backup] Cleaned ${toRemove.length} old backups, kept ${keepCount}`);
+    console.error(`[Backup] Cleaned ${toRemove.length} old backups, kept ${keepCount}`);
     return toRemove.length;
   }
 }

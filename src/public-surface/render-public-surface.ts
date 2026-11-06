@@ -41,6 +41,7 @@ const GROUP_ORDER: readonly PublicOperationGroup[] = [
   "portfolio",
   "goals",
   "debts",
+  "statements",
   "splits",
   "reconcile",
   "server",
@@ -60,6 +61,7 @@ const GROUP_TITLES: Record<PublicOperationGroup, string> = {
   portfolio: "Portfolio",
   goals: "Goals",
   debts: "Debts",
+  statements: "Statements",
   splits: "Group Splits",
   reconcile: "Reconcile",
   server: "Server",
@@ -86,6 +88,8 @@ const GROUP_TAGLINES: Record<PublicOperationGroup, string> = {
     "Savings goals. A goal is an ordinary account whose note carries a `#goal:` tag, so goals created here appear in the arc app and vice versa. Amounts are integer minor units.",
   debts:
     "Credit cards, loans and BNPL plans as the arc app (1.0.49+) follows them: each a cycle with a due date, amount due, minimum and state (paid / part paid / unpaid / overdue), plus payoff maths and the \"Pay here first\" plan. A debt's details live in its account note as one `#debt|` line, and statement figures in an `arc-debt-cycles:<account>` note, so what you set or record here shows on the phone and vice versa. Cards in another currency are judged in their own currency.",
+  statements:
+    "The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement, undoing one and statement passwords stay on the phone; from here you can switch auto-filing per account and dismiss a fee suggestion. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).",
   splits:
     "Share a transaction with other people and track what they owe you. Two kinds live in a budget: `#gsplit|` tokens in transaction notes (a virtual overlay — no money moves, and balances, registers and reconciliation are untouched), and the arc app's IOUs ledger (1.0.49+), one on-budget account whose rows are what each person owes you or you owe them (read it with `ious`).",
   reconcile:

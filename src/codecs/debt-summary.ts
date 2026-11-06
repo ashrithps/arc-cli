@@ -1,4 +1,4 @@
-// Ported from the arc app (budgetarc 1.0.49): the pure parts of
+// Ported from the arc app (budgetarc 1.0.49, cycleFromStatements 1.0.50): the pure parts of
 // services/DebtCycleService.ts, plus readFxNote from utils/fxNote.ts and
 // currencyRulesFrom from utils/currencyRuleParse.ts. The reads (SQLite there,
 // @actual-app/api here) live in src/operations/debts.ts; everything that
@@ -21,6 +21,7 @@ import {
 import { EMPTY_DEBT_TAG, type DebtKind, type DebtTag } from './debt-tag.js';
 import { debtChargeKind } from './debt-charges.js';
 import { type DailyNet, type DebtProgress, debtProgressOf } from './debt-progress.js';
+import { learnCycle, projectCycles, tagDueDay } from './statement-cycle-learning.js';
 
 // ── FX prefixes in a row's note (utils/fxNote.ts readFxNote) ────────────────
 
@@ -301,6 +302,40 @@ export interface DebtSummary {
   ring: number;
   /** Balance ÷ limit at the newest statement and the one before; null where either isn't known. */
   statementUtilisation: [number | null, number | null];
+  /** The cycle came from the statements (cycleFromStatements), not from a due day the user set. */
+  cycleLearned?: boolean;
+  /** CLI: the days that cycle judged by (the app reads them again with statementDueDayOf). */
+  learnedCycle?: { dueDay: number; statementDay: number | null } | null;
+}
+
+const STMT_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The cycle of a card whose tag has no due day, from what its statements
+ * printed (owner, 1.0.50): the learned cycle when two or more statements agree
+ * (utils/statementCycleLearning), else the newest statement's own due date.
+ * Read-time only, so a linked statement shows its line: the tag is never
+ * written, the values stay "learned", and what the user typed always wins (a
+ * due day, or "no" to a learned one). Null when there's nothing to go on.
+ */
+export function cycleFromStatements(
+  tag: Pick<DebtTag, 'kind' | 'dueDay' | 'statementDay' | 'askDeclined'>,
+  cycles: readonly DebtCycleRecord[],
+  currency?: string | null,
+): { dueDay: number; statementDay: number | null } | null {
+  if (tag.kind === 'bnpl' || tag.dueDay != null || tag.askDeclined) return null;
+  // Statements: a record with a balance or a minimum (a limit alone is a purchase alert's).
+  const stated = cycles.filter((c) => STMT_DAY.test(c.due) && (c.bal != null || c.min != null));
+  if (stated.length === 0) return null;
+  const learned = learnCycle(stated.filter((c) => c.stmt).map((c) => ({ stmt: c.stmt!, due: c.due })), { currency });
+  if (learned) {
+    const latest = stated.map((c) => c.stmt ?? '').filter(Boolean).sort().pop()!;
+    const day = tagDueDay(learned, projectCycles(learned, latest));
+    if (day != null) return { dueDay: day, statementDay: tag.statementDay ?? learned.statementDay };
+  }
+  const newest = [...stated].sort((a, b) => (a.due < b.due ? 1 : -1))[0];
+  const statementDay = tag.statementDay ?? (newest.stmt && STMT_DAY.test(newest.stmt) ? +newest.stmt.slice(8, 10) : null);
+  return { dueDay: +newest.due.slice(8, 10), statementDay };
 }
 
 function chargesOf(rows: DebtRow[], interestCategories: ReadonlySet<string>, today: Date) {
@@ -347,7 +382,10 @@ export function debtSummaryOf(
   today: Date,
   ctx: DebtReadContext,
 ): DebtSummary {
-  const judged: DebtTag = tag ?? { ...EMPTY_DEBT_TAG, kind, other: [] };
+  const base: DebtTag = tag ?? { ...EMPTY_DEBT_TAG, kind, other: [] };
+  // No due day typed: the statements' own cycle, learned, never written to the tag.
+  const learnedCycle = cycleFromStatements(base, read.cycles, cardCurrencyOf(tag, accountId, ctx));
+  const judged: DebtTag = learnedCycle ? { ...base, ...learnedCycle } : base;
   const input = debtCycleInputFrom(accountId, judged, read, ctx);
   const hasDue = judged.kind === 'bnpl' ? !!judged.first : judged.dueDay != null;
   const state = hasDue ? debtCycleState(input, today) : null;
@@ -383,5 +421,7 @@ export function debtSummaryOf(
     fxRate: input.fxRate,
     ring: ringOf(kind, tag, state, Math.max(0, -input.balance), progress),
     statementUtilisation: [utilisationAt(statements[0]), utilisationAt(statements[1])],
+    cycleLearned: !!learnedCycle,
+    learnedCycle,
   };
 }

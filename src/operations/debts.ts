@@ -259,8 +259,11 @@ export interface DebtListItem {
   kind: DebtKind;
   /** False for a debt arc found by its type or place (no `#debt|` line yet). */
   tagged: boolean;
+  /** The tag's due day, else the one its statements give (1.0.50, `cycleLearned`). */
   dueDay: number | null;
   statementDay: number | null;
+  /** The due and statement days came from the card's statements, not from what was typed. */
+  cycleLearned: boolean;
   /** The debt's own currency when it isn't the budget's; "card" amounts are in it. */
   currency: string | null;
   /** Signed account balance, budget currency (negative while owed). */
@@ -298,8 +301,9 @@ function listItem(account: AccountRow, s: DebtSummary, budget: BudgetRead): Debt
     accountName: account.name,
     kind: s.kind,
     tagged: !!tag,
-    dueDay: tag?.dueDay ?? null,
-    statementDay: tag?.statementDay ?? null,
+    dueDay: tag?.dueDay ?? s.learnedCycle?.dueDay ?? null,
+    statementDay: tag?.statementDay ?? s.learnedCycle?.statementDay ?? null,
+    cycleLearned: !!s.cycleLearned,
     currency: cardCurrencyOf(tag, account.id, budget.ctx),
     balance: -s.owedBook,
     owed: s.owedBook,
@@ -521,6 +525,9 @@ export async function showDebt(client: ActualClient, accountId: string, now: Dat
     owed: s.owedBook,
     owedCard,
     cycle: s.state,
+    /** No due day typed: the cycle is the one its statements give (arc 1.0.50). */
+    cycleLearned: !!s.cycleLearned,
+    learnedCycle: s.learnedCycle ?? null,
     history: s.history,
     progress: s.progress,
     charges: s.charges,

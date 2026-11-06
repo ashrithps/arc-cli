@@ -27,6 +27,7 @@ export type PublicOperationGroup =
   | "portfolio"
   | "goals"
   | "debts"
+  | "statements"
   | "splits"
   | "reconcile"
   | "server"

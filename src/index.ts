@@ -15,6 +15,7 @@ import * as categories from './operations/categories.js';
 import * as reconcile from './operations/reconciliation.js';
 import { looselyParseAmount } from './reconcile/account.js';
 import * as debts from './operations/debts.js';
+import * as statements from './operations/statements.js';
 import * as categoryTemplates from './operations/category-templates.js';
 import { flagsForClearedState, parseClearedState } from './codecs/cleared-status.js';
 import * as payees from './operations/payees.js';
@@ -1465,6 +1466,53 @@ async function handleDebts(
   }
 }
 
+async function handleStatements(
+  client: ActualClient,
+  writer: SafeWriter,
+  sub: string,
+  flags: Record<string, string>
+) {
+  const accountId = () => accounts.resolveAccountId(client, requireFlag(flags, 'account', 'id'));
+  switch (sub) {
+    case 'list': {
+      const list = await statements.listStatements(client);
+      if (isJson(flags)) return printJson(list);
+      return ui.printStatementAccounts(list);
+    }
+    case 'show': {
+      const detail = await statements.showStatements(client, await accountId());
+      if (isJson(flags)) return printJson(detail);
+      return ui.printStatementDetail(detail);
+    }
+    case 'fees': {
+      const ref = flags.account ?? flags.id;
+      const fees = await statements.statementFees(client, ref ? await accounts.resolveAccountId(client, ref) : undefined);
+      if (isJson(flags)) return printJson(fees);
+      return ui.printStatementFees(fees);
+    }
+    case 'auto-file': {
+      const on = flags.on === 'true' || flags.auto === 'true';
+      const off = flags.off === 'true' || flags.auto === 'false';
+      if (on === off) throw new Error('Pass --on (statements file on their own) or --off (they wait for a look on the phone).');
+      const res = await statements.setStatementAutoFile(client, writer, await accountId(), on);
+      if (isJson(flags)) return printJson(res);
+      console.log(
+        `${res.accountName}: ${res.autoFile ? 'statements file on their own' : 'statements wait for a look on the phone'}` +
+          (res.changed ? '.' : ' (already so; nothing changed).')
+      );
+      return;
+    }
+    case 'dismiss-fee': {
+      const res = await statements.dismissStatementFee(client, writer, await accountId(), requireFlag(flags, 'fee'));
+      if (isJson(flags)) return printJson(res);
+      console.log(`${res.accountName}: arc won't suggest asking back ${res.feeId} again.`);
+      return;
+    }
+    default:
+      throw new Error(`Unknown statements subcommand: ${sub}. Use: list, show, fees, auto-file, dismiss-fee`);
+  }
+}
+
 async function handleGoals(
   client: ActualClient,
   writer: SafeWriter,
@@ -1701,7 +1749,7 @@ async function handleSessionCommand(sub: string, flags: Record<string, string>) 
 /** Commands `executeParsedCommand` (or the one-shot path in `main`) actually runs. */
 export const DATA_COMMANDS: ReadonlySet<string> = new Set([
   'connect', 'doctor', 'files', 'accounts', 'transactions', 'categories', 'payees', 'tags', 'rules',
-  'schedules', 'budgets', 'query', 'portfolio', 'goals', 'debts', 'splits', 'reconcile',
+  'schedules', 'budgets', 'query', 'portfolio', 'goals', 'debts', 'statements', 'splits', 'reconcile',
 ]);
 
 export async function executeParsedCommand(
@@ -1727,6 +1775,7 @@ export async function executeParsedCommand(
     case 'portfolio': await handlePortfolio(client, subcommand, flags); break;
     case 'goals': await handleGoals(client, writer, subcommand, flags); break;
     case 'debts': await handleDebts(client, writer, subcommand, flags); break;
+    case 'statements': await handleStatements(client, writer, subcommand, flags); break;
     case 'splits': await handleSplits(client, writer, subcommand, flags); break;
     case 'reconcile': await handleReconcile(client, writer, subcommand, flags); break;
     default: console.error(`Unknown command: ${command}`); printHelp();

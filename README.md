@@ -16,7 +16,7 @@ arc cli connects to your budget through [arc](https://arc.moi). It works with ar
 
 arc is the installed CLI, TUI, and MCP surface for [Actual Budget](https://actualbudget.org). One install gives you:
 
-- an `arc` command-line interface covering accounts, transactions, categories and category groups, payees, tags, rules, schedules, budget months, savings goals, debts (cards, loans and BNPL plans: each cycle's amount due and state, statement figures, payoff maths and "Pay here first"), budget templates, group splits, refunds, statement reconciliation, duplicate detection, investment portfolios, and reports
+- an `arc` command-line interface covering accounts, transactions, categories and category groups, payees, tags, rules, schedules, budget months, savings goals, debts (cards, loans and BNPL plans: each cycle's amount due and state, statement figures, payoff maths and "Pay here first"), the statements the arc app files (figures, reconciled or not, the undo journal, payment due, fees worth asking back), budget templates, group splits, refunds, statement reconciliation, duplicate detection, investment portfolios, and reports
 - a terminal UI via `arc ui`
 - a stdio MCP server via `arc mcp` that exposes every data operation as a structured tool for agents
 
@@ -100,7 +100,7 @@ arc also registers an `arc` entry in Claude Desktop's `claude_desktop_config.jso
 
 ### Remote MCP for Claude.ai web / mobile
 
-`arc mcp --http` runs the same 114 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
+`arc mcp --http` runs the same 119 tools as a Streamable HTTP MCP server instead of stdio. Combined with a tunnel (cloudflare tunnel, tailscale funnel, ngrok, etc.) it lets the Claude.ai web app, Claude mobile app, and Cursor's remote-MCP feature talk to your local arc.
 
 ```bash
 # Loopback only, generates a random bearer token and prints it
@@ -840,6 +840,40 @@ Credit cards, loans and BNPL plans as the arc app (1.0.49+) follows them: each a
 
   ```bash
   arc debts plan
+  ```
+
+## Statements
+
+The statements the arc app (1.0.50+) files for each account: their figures, whether each reconciled with the bank, the undo journal, the statement and due days learned from them, the payment due on a card, and the fees of the last 12 months with the late fees worth asking back. They live in an `arc-statements:<account>` note, so what the phone filed reads here. Filing a statement, undoing one and statement passwords stay on the phone; from here you can switch auto-filing per account and dismiss a fee suggestion. Amounts are minor units of the statement's currency, signed as Actual stores the balance (a card that owes is negative).
+
+- **`arc statements list`** — Every account the arc app keeps statements for: how many are filed, the newest one's end date and closing balance and whether it matched the bank's balance (or by how much it was off), whether statements file on their own, the statement and due days learned from them, a statement that should have arrived and hasn't, and for a card the payment due on its newest statement (what it asked, what's left after payments since, the due date, whether the grace period was lost, and the account it was paid from last time). Payments due first. _Approval: runs._
+
+  ```bash
+  arc statements list
+  ```
+
+- **`arc statements show`** — One account's statements in full: each statement's period, opening and closing balance, interest and fees, where it came from (filed, typed, read from a text), whether it reconciled with the bank and by how much it was off, and its undo journal (rows it added, cleared, locked, updated or linked, and what Undo filing on the phone would take back or keep because it changed since). Also the cycle learned from them, the next 12 statement and due dates with the annual fee, promo end and last loan instalment, the card fields arc filled in, the foreign-purchase markup, a loan's next instalments, the payment due, and the fees of the last 12 months. _Approval: runs._
+
+  ```bash
+  arc statements show --account 'HDFC Card'
+  ```
+
+- **`arc statements fees`** — Fees from the last 12 months, summed from the account's own rows (tax on them apart), and the late fees worth asking the bank to take back: in India a late fee charged when the payment arrived 1-3 days after the due date (RBI), and anywhere the first late fee in a year on a card paid in full since. A fee the bank already reversed, or one you dismissed, is left out. Only accounts with a statement filed; a card's or loan's 12-month total is in `arc debts show`. Omit the account for every account. _Approval: runs._
+
+  ```bash
+  arc statements fees
+  ```
+
+- **`arc statements auto-file`** — Turn statement filing on or off for one account (Settings › Statements on the phone). On, a statement that adds up files itself with no tap; off, it waits on the phone for a look. The switch lives in the budget, so every phone on it follows. Changes nothing else: no rows, no statements. _Approval: asks._
+
+  ```bash
+  arc statements auto-file --account 'HDFC Card' --off
+  ```
+
+- **`arc statements dismiss-fee`** — "Not this one": stop suggesting that a late fee is worth asking the bank to take back, on every phone. Only a fee `arc statements fees` suggests now can be dismissed; the fee row itself is not touched. _Approval: asks._
+
+  ```bash
+  arc statements dismiss-fee --account 'HDFC Card' --fee <transaction-id>
   ```
 
 ## Group Splits

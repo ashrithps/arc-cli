@@ -49,6 +49,8 @@ import * as transactionOps from '../operations/transactions.js';
 import * as categoryOps from '../operations/categories.js';
 import * as reconcileOps from '../operations/reconciliation.js';
 import * as debtOps from '../operations/debts.js';
+import * as statementOps from '../operations/statements.js';
+import { keepStdoutForProtocol } from './stdio-guard.js';
 import * as categoryTemplateOps from '../operations/category-templates.js';
 import { flagsForClearedState } from '../codecs/cleared-status.js';
 import * as payeeOps from '../operations/payees.js';
@@ -743,6 +745,17 @@ export const OPERATION_HANDLERS: Record<string, McpOperationHandler> = {
   arc_debts_plan: async ({ client }, { extra, method }) =>
     debtOps.payoffPlanFor(client, { extra: dollarsToCents(extra), method }),
 
+  // statements (arc 1.0.50: `arc-statements:<account>` notes) ──────────────────
+  arc_statements_list: async ({ client }) => statementOps.listStatements(client),
+  arc_statements_show: async ({ client }, { account }) =>
+    statementOps.showStatements(client, await accountOps.resolveAccountId(client, account)),
+  arc_statements_fees: async ({ client }, { account }) =>
+    statementOps.statementFees(client, account ? await accountOps.resolveAccountId(client, account) : undefined),
+  arc_statements_auto_file: async ({ client, writer }, { account, auto }) =>
+    statementOps.setStatementAutoFile(client, writer, await accountOps.resolveAccountId(client, account), auto !== false),
+  arc_statements_dismiss_fee: async ({ client, writer }, { account, fee }) =>
+    statementOps.dismissStatementFee(client, writer, await accountOps.resolveAccountId(client, account), fee),
+
   // splits (group splits stored as `#gsplit|` transaction-note tokens) ────────
   arc_splits_list: async ({ client }, { person, open, start, end }) =>
     splitOps.listSplitGroups(client, { person, openOnly: !!open, start, end }),
@@ -882,6 +895,7 @@ export function resolveExposure(env: NodeJS.ProcessEnv = process.env): McpExposu
 const AMOUNT_BEARING_GROUPS = new Set<PublicOperation['group']>([
   'reconcile',
   'debts',
+  'statements',
   'accounts',
   'transactions',
   'budgets',
@@ -1306,6 +1320,8 @@ async function withRealClient(): Promise<{
 // ── Production entry points ─────────────────────────────────────────────────
 
 export async function startMcpServer(options: { agent?: string } = {}): Promise<void> {
+  // stdout is the protocol from here on: nothing but the transport writes to it.
+  keepStdoutForProtocol();
   const server = createMcpServer({ agentFlag: options.agent });
   const transport = new StdioServerTransport();
   await server.connect(transport);

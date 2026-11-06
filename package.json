@@ -13,7 +13,7 @@
     "arc:mcp": "node bin/arc.js mcp"
   },
   "dependencies": {
-    "@actual-app/api": "^26.5.2",
+    "@actual-app/api": "^26.11.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "blessed": "^0.1.81",
     "blessed-contrib": "^4.11.0",
