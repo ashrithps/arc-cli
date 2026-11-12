@@ -167,7 +167,7 @@ export function persistSelectedBudget(
   saveBudgetMetadata(profile, env);
 }
 
-/** Store a renewed arc Premium licence. Not a secret: it lives in config.json. */
+/** Store a renewed arc licence. Not a secret: it lives in config.json. */
 export function saveCliLicense(license: string, env: NodeJS.ProcessEnv = process.env): void {
   updateStoredConfig(config => ({ ...config, cliLicense: license }), env);
 }

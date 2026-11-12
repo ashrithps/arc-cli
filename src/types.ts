@@ -22,7 +22,7 @@ export interface RuntimeConfig {
   customHeaders?: ServerHeader[];
   /** Set (with no headers in this file) once the headers moved to the keychain. */
   hasCustomHeaders?: boolean;
-  /** arcreactor-signed arc Premium licence for a self-hosted apiUrl. Not a secret. */
+  /** arcreactor-signed arc licence for a self-hosted apiUrl. Not a secret. */
   cliLicense?: string;
 }
 

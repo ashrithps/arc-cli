@@ -54,7 +54,7 @@ export function assertArcHost(apiUrl: string, source: string): void {
   }
 }
 
-// ── Self-hosted servers: the arc Premium licence ────────────────────────────
+// ── Self-hosted servers: the arc licence ────────────────────────────────────
 //
 // A self-hosted (BYOB) Actual server is allowed only with a licence arcreactor
 // signed for that exact host. Token: `<payloadB64>.<sigB64>`, base64url without
@@ -101,7 +101,7 @@ let keyOverride: KeyObject | null = null;
 
 /**
  * Tests sign their own licences. Not reachable from the environment: an env
- * override would be a way to mint Premium from a shell.
+ * override would be a way to mint a licence from a shell.
  */
 export function setCliLicensePublicKeyForTests(key: KeyObject | string | null): void {
   keyOverride = key == null ? null : typeof key === 'string' ? publicKeyFromRaw(key) : key;
@@ -129,7 +129,7 @@ export function readCliLicense(token: string | undefined): CliLicensePayload | n
 export function verifyCliLicenseSignature(token: string): CliLicensePayload {
   const parts = token.trim().split('.');
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error('The arc Premium licence is malformed.');
+    throw new Error('The arc licence is malformed.');
   }
   const [payloadB64, sigB64] = parts;
   const signature = Buffer.from(sigB64, 'base64url');
@@ -140,12 +140,12 @@ export function verifyCliLicenseSignature(token: string): CliLicensePayload {
     signature
   );
   if (!ok) {
-    throw new Error('The arc Premium licence was not signed by arc. Copy a fresh install command from the arc app (Settings → AI agents).');
+    throw new Error('The arc licence was not signed by arc. Copy a fresh install command from the arc app (Settings → AI agents).');
   }
   const payload = readCliLicense(payloadB64);
   if (!payload || payload.v !== 1 || payload.kind !== CLI_LICENSE_KIND ||
       typeof payload.host !== 'string' || typeof payload.exp !== 'number') {
-    throw new Error('The arc Premium licence is not a CLI licence this build understands.');
+    throw new Error('The arc licence is not a CLI licence this build understands.');
   }
   return payload;
 }
@@ -204,21 +204,21 @@ export function assertAllowedHost(apiUrl: string, source: string, license?: stri
   if (!license) {
     throw new Error(
       `Invalid ${source}: "${parsed.hostname}" is not an arc-managed host. ` +
-      'Self-hosted Actual servers need arc Premium. ' +
-      'In the arc app open Settings → AI agents and copy a fresh install command.'
+      'A self-hosted Actual server needs an arc licence, which is free with an arc account: ' +
+      'copy the install command from the arc app (Settings → AI agents).'
     );
   }
   const payload = verifyCliLicenseSignature(license);
   const host = parsed.host.toLowerCase();
   if (payload.host !== host) {
     throw new Error(
-      `Your arc Premium licence is for ${payload.host}, not ${host}. ` +
+      `Your arc licence is for ${payload.host}, not ${host}. ` +
       'Copy a fresh install command from the arc app (Settings → AI agents).'
     );
   }
   if (!(payload.exp > now)) {
     throw new Error(
-      `Your arc Premium licence for ${host} expired on ${formatDate(payload.exp)}. ` +
+      `Your arc licence for ${host} expired on ${formatDate(payload.exp)}. ` +
       'Copy a fresh install command from the arc app (Settings → AI agents), ' +
       'or run any command on a paired machine to renew it.'
     );

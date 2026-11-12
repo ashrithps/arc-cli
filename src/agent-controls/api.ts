@@ -63,7 +63,7 @@ export interface AgentApi {
   auditBatch(events: OfflineEvent[]): Promise<{ accepted: number }>;
   activity(params: { afterSeq?: number; limit?: number; client?: string }): Promise<AuditPageWire>;
   enrollMac(body: { publicKey: string; label: string }): Promise<{ deviceId: string; status: 'pending' }>;
-  /** A fresh arc Premium licence for a self-hosted server; 403 PREMIUM_REQUIRED when the user has none. */
+  /** A fresh arc licence for a self-hosted server (free with any arc account); arcreactor answers 403 when it will not issue one. */
   cliLicense(apiUrl: string): Promise<CliLicenseResponse>;
 }
 

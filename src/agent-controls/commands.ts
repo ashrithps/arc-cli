@@ -360,13 +360,13 @@ export async function handleAuthStatus(flags: Flags, env: NodeJS.ProcessEnv = pr
   const license = report.license as ReturnType<typeof selfHostedLicense>;
   const licenseLine = license && (license.host
     ? `${license.host} · ${license.state === 'invalid' ? 'not valid' : 'expires'} ${license.expiresAt?.slice(0, 10) ?? ''}`
-    : 'none (self-hosted servers need arc Premium)');
+    : 'none (a self-hosted server needs an arc licence, free with an arc account)');
 
   if (!state || state.status !== 'active') {
     console.log(`${chalk.bold('Not paired.')} Agents run without asking; only this machine keeps a record.`);
     console.log(chalk.dim('Pair from the arc app: Settings → AI agents → Connect a machine.'));
     console.log(chalk.dim(`Secrets: ${secretsIn}`));
-    if (licenseLine) console.log(chalk.dim(`Premium licence: ${licenseLine}`));
+    if (licenseLine) console.log(chalk.dim(`arc licence: ${licenseLine}`));
     return;
   }
   console.log(`${chalk.green('●')} Paired as ${chalk.bold(state.label ?? state.hostname)}`);
@@ -378,7 +378,7 @@ export async function handleAuthStatus(flags: Flags, env: NodeJS.ProcessEnv = pr
   console.log(`  ${chalk.dim('last contact')} ${report.lastContactAt ?? 'never'}`);
 }
 
-/** The arc Premium licence behind a self-hosted server, for `arc auth status`; undefined on managed hosts. */
+/** The arc licence behind a self-hosted server, for `arc auth status`; undefined on managed hosts. */
 function selfHostedLicense(env: NodeJS.ProcessEnv) {
   let apiUrl: string | undefined;
   let token: string | undefined;

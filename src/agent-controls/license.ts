@@ -1,5 +1,5 @@
 /**
- * Renewing the arc Premium licence that lets this CLI reach a self-hosted
+ * Renewing the arc licence that lets this CLI reach a self-hosted
  * Actual server (see utils/arc-host.ts). Only a paired machine can renew: the
  * agent connection is the only identity the CLI has. An unpaired install
  * renews by copying a fresh install command from the app.
